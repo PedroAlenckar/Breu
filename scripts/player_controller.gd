@@ -7,7 +7,9 @@ const CROUCH_SPEED: float = 1.45
 const STAND_EYE_Y: float = 1.56
 const CROUCH_EYE_Y: float = 0.94
 const GRAVITY: float = 14.0
-const MOUSE_SENSITIVITY: float = 0.0026
+
+var mouse_sensitivity: float = 0.0026
+var is_moving_now: bool = false
 
 var camera: Camera3D
 var head_pivot: Node3D
@@ -56,24 +58,23 @@ func _ready() -> void:
 	scare_flash_light.visible = false
 	head_pivot.add_child(scare_flash_light)
 	
-	# Footsteps routed through the concrete Stairwell Reverb bus!
+	# Footsteps routed through the concrete Stairwell Reverb bus (switches to dry Master inside Antecâmara!)
 	sfx_step = AudioSynth.create_player(self, AudioSynth.make_footstep(), "Stairwell", -4.5)
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func set_inside_small_room(inside: bool) -> void:
+	if sfx_step:
+		sfx_step.bus = "Master" if inside else "Stairwell"
 
 func _unhandled_input(event: InputEvent) -> void:
 	if controls_locked:
 		return
 	if event is InputEventMouseMotion and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-		rotate_y(-event.relative.x * MOUSE_SENSITIVITY)
-		head_pivot.rotate_x(-event.relative.y * MOUSE_SENSITIVITY)
+		rotate_y(-event.relative.x * mouse_sensitivity)
+		head_pivot.rotate_x(-event.relative.y * mouse_sensitivity)
 		head_pivot.rotation.x = clamp(head_pivot.rotation.x, deg_to_rad(-80.0), deg_to_rad(80.0))
 	elif event is InputEventMouseButton and event.pressed:
 		if Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
-	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		if Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED:
-			Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
-		else:
 			Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
 
 func _physics_process(delta: float) -> void:
@@ -115,6 +116,7 @@ func _physics_process(delta: float) -> void:
 		speed = SPRINT_SPEED
 	
 	var move_dir = (transform.basis * Vector3(input_vec.x, 0.0, input_vec.y)).normalized()
+	is_moving_now = (move_dir != Vector3.ZERO)
 	
 	if move_dir != Vector3.ZERO:
 		velocity.x = move_dir.x * speed

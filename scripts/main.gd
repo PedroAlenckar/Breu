@@ -16,12 +16,54 @@ var ui_interact_prompt: Label
 var ui_blackout_rect: ColorRect
 var ui_victory_label: Label
 
-# Global Audio
+# Ground Floor 4-Digit Keypad / Padlock System
+var keypad_overlay: ColorRect
+var keypad_display_label: Label
+var keypad_status_label: Label
+var is_keypad_open: bool = false
+var exit_code_digits: Array[int] = [0, 0, 0, 0]
+var entered_code: String = ""
+var sfx_keypad_beep: AudioStreamPlayer
+var sfx_keypad_error: AudioStreamPlayer
+var sfx_keypad_unlock: AudioStreamPlayer
+
+# Main Menu, Pause Menu, Crosshair & [TAB] Clue Notebook
+var menu_overlay: ColorRect
+var menu_title_label: Label
+var menu_subtitle_label: Label
+var menu_play_btn: Button
+var menu_restart_btn: Button
+var menu_controls_panel: PanelContainer
+var ui_crosshair: ColorRect
+var notebook_panel: PanelContainer
+var notebook_label: Label
+var ui_toast_label: Label
+var discovered_clues: Dictionary = {}
+var is_notebook_open: bool = false
+var is_in_menu: bool = true
+var is_game_started: bool = false
+var current_vignette: float = 0.55
+
+# Delayed Phantom Footsteps Behind You micro-event
+var sfx_phantom_behind: AudioStreamPlayer3D
+var sfx_window_face_thud: AudioStreamPlayer
+var player_was_moving: bool = false
+var phantom_step_cooldown: float = 28.0
+
+# Global Audio & Ambient Soundscape
 var sfx_ambient_drone: AudioStreamPlayer
 var sfx_bulb_pop: AudioStreamPlayer
 var sfx_jumpscare_sting: AudioStreamPlayer
 var sfx_wake_pant: AudioStreamPlayer
 var sfx_whisper_neck: AudioStreamPlayer
+var sfx_heartbeat: AudioStreamPlayer
+var sfx_darkness_pressure: AudioStreamPlayer
+var sfx_distant_building: AudioStreamPlayer
+var sfx_ambient_3d_emitter: AudioStreamPlayer3D
+var ambient_oneshot_timer: float = 4.0
+var distant_building_timer: float = 9.0
+var heartbeat_timer: float = 0.0
+var darkness_pressure_level: float = 0.0
 
 # 3D Scare Prop (used for "O Puxão no Breu" close-up grab)
 var scare_entity_node: Node3D
@@ -62,6 +104,7 @@ func _ready() -> void:
 	_setup_global_audio()
 	
 	_start_new_run(false)
+	_show_menu(false)
 
 func _setup_environment() -> void:
 	var we = WorldEnvironment.new()
@@ -81,21 +124,24 @@ func _build_physical_10_story_building() -> void:
 	# Physically stack Floor 10 (Y = 0.0) down to Floor 0 / Térreo (Y = -48.0)
 	for f in range(TOP_FLOOR, -1, -1):
 		var seg = StairwellSegment.new()
+		seg.floor_index = f
 		seg.is_top_floor = (f == TOP_FLOOR)
 		seg.is_ground_floor = (f == 0)
 		seg.position = Vector3(0.0, -float(TOP_FLOOR - f) * SEGMENT_HEIGHT, 0.0)
 		seg.haunting_ignored_kill.connect(_on_haunting_ignored_kill)
 		seg.back_door_kill.connect(_on_back_door_kill)
+		seg.request_open_keypad.connect(_open_keypad_ui)
 		seg.ground_floor_escaped.connect(_on_ground_floor_escaped)
 		seg.floor_went_dark_after_visit.connect(_on_floor_went_dark_after_visit)
 		seg.request_upper_floor_anomaly.connect(_on_request_upper_floor_anomaly)
+		seg.clue_discovered.connect(_on_clue_discovered)
 		add_child(seg)
 		floors[f] = seg
 
 func _setup_top_floor_security_gate() -> void:
-	# Iron security gate ONLY on the 10th floor (where the stairwell begins at the top!)
+	# Iron security gate ONLY on the 10th floor — flush with the landing edge (Z = 0.02) so there is ZERO floor gap!
 	var gate = Node3D.new()
-	gate.position = Vector3(1.12, 0.0, -0.35)
+	gate.position = Vector3(1.12, 0.0, 0.02)
 	add_child(gate)
 	
 	var gate_body = StaticBody3D.new()
@@ -147,21 +193,25 @@ func _setup_pursuer_and_scare_entities() -> void:
 	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	fmat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	
-	# 1. Physical 3D Pursuer
+	# 1. Physical 3D Pursuer (Unnaturally tall, long spindly arms, crooked neck, larger stark pale face!)
 	pursuer_node = Node3D.new()
+	pursuer_node.scale = Vector3(1.0, 1.18, 1.0)
 	pursuer_node.visible = false
 	add_child(pursuer_node)
 	
 	var parts = StairwellSegment.build_articulated_dark_figure(pursuer_node, p_mat)
 	pursuer_head = parts["head"]
+	pursuer_head.rotation.z = deg_to_rad(20.0)
 	pursuer_arm_l = parts["arm_l"]
 	pursuer_arm_r = parts["arm_r"]
+	pursuer_arm_l.scale = Vector3(0.85, 1.28, 0.85)
+	pursuer_arm_r.scale = Vector3(0.85, 1.28, 0.85)
 	pursuer_leg_l = parts["leg_l"]
 	pursuer_leg_r = parts["leg_r"]
 	
 	var p_face = MeshInstance3D.new()
 	var pf_quad = QuadMesh.new()
-	pf_quad.size = Vector2(0.24, 0.30)
+	pf_quad.size = Vector2(0.28, 0.36)
 	p_face.mesh = pf_quad
 	p_face.position = Vector3(0.0, 0.0, 0.135)
 	p_face.material_override = fmat
@@ -201,8 +251,42 @@ func _setup_post_process_and_ui() -> void:
 	ui_hint_label.position = Vector2(22, 16)
 	ui_hint_label.add_theme_font_size_override("font_size", 16)
 	ui_hint_label.add_theme_color_override("font_color", Color(0.60, 0.65, 0.62, 0.55))
-	ui_hint_label.text = "BREU  |  [WASD] Andar  [SHIFT] Correr  [CTRL] Agachar  [E] Porta  |  [F1] Anomalia  [F2] Perseguidor"
+	ui_hint_label.text = "BREU  |  [WASD] Andar  [SHIFT] Correr  [CTRL] Agachar  [E] Interagir  [TAB] Notas  [ESC] Pausa"
 	canvas.add_child(ui_hint_label)
+	
+	# Subtle Center Crosshair Dot (brightens when looking near an interactable!)
+	ui_crosshair = ColorRect.new()
+	ui_crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	ui_crosshair.position = Vector2(-2, -2)
+	ui_crosshair.size = Vector2(4, 4)
+	ui_crosshair.color = Color(0.85, 0.88, 0.85, 0.30)
+	ui_crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	canvas.add_child(ui_crosshair)
+	
+	# [TAB] Crumpled Paper Clue Notebook Panel (Top-Right)
+	notebook_panel = PanelContainer.new()
+	notebook_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	notebook_panel.position = Vector2(-325, 26)
+	notebook_panel.custom_minimum_size = Vector2(300, 195)
+	notebook_panel.visible = false
+	canvas.add_child(notebook_panel)
+	
+	notebook_label = Label.new()
+	notebook_label.add_theme_font_size_override("font_size", 15)
+	notebook_label.add_theme_color_override("font_color", Color(0.88, 0.82, 0.68))
+	notebook_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	notebook_panel.add_child(notebook_label)
+	
+	# Subtle Bottom-Right Clue Discovery Toast
+	ui_toast_label = Label.new()
+	ui_toast_label.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	ui_toast_label.position = Vector2(-330, -48)
+	ui_toast_label.size = Vector2(310, 32)
+	ui_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	ui_toast_label.add_theme_font_size_override("font_size", 16)
+	ui_toast_label.add_theme_color_override("font_color", Color(0.88, 0.35, 0.30, 0.0))
+	ui_toast_label.text = ""
+	canvas.add_child(ui_toast_label)
 	
 	ui_interact_prompt = Label.new()
 	ui_interact_prompt.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -230,14 +314,250 @@ func _setup_post_process_and_ui() -> void:
 	ui_victory_label.modulate = Color(0.45, 0.95, 0.55, 0.0)
 	ui_victory_label.text = "TÉRREO ALCANÇADO\nVocê saiu do BREU."
 	ui_blackout_rect.add_child(ui_victory_label)
+	
+	_build_keypad_ui(canvas)
+	_build_main_and_pause_menu(canvas)
+
+func _build_main_and_pause_menu(canvas: CanvasLayer) -> void:
+	menu_overlay = ColorRect.new()
+	menu_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	menu_overlay.color = Color(0.0, 0.0, 0.0, 0.58)
+	canvas.add_child(menu_overlay)
+	
+	var vbox = VBoxContainer.new()
+	vbox.set_anchors_preset(Control.PRESET_CENTER)
+	vbox.custom_minimum_size = Vector2(360, 340)
+	vbox.position = Vector2(-180, -170)
+	vbox.add_theme_constant_override("separation", 14)
+	menu_overlay.add_child(vbox)
+	
+	menu_title_label = Label.new()
+	menu_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_title_label.add_theme_font_size_override("font_size", 56)
+	menu_title_label.add_theme_color_override("font_color", Color(0.88, 0.88, 0.85))
+	menu_title_label.text = "B R E U"
+	vbox.add_child(menu_title_label)
+	
+	menu_subtitle_label = Label.new()
+	menu_subtitle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	menu_subtitle_label.add_theme_font_size_override("font_size", 15)
+	menu_subtitle_label.add_theme_color_override("font_color", Color(0.72, 0.22, 0.20))
+	menu_subtitle_label.text = "10º ANDAR — ESCADA DE EMERGÊNCIA"
+	vbox.add_child(menu_subtitle_label)
+	
+	var spacer = Control.new()
+	spacer.custom_minimum_size = Vector2(0, 14)
+	vbox.add_child(spacer)
+	
+	menu_play_btn = Button.new()
+	menu_play_btn.text = "JOGAR"
+	menu_play_btn.custom_minimum_size = Vector2(0, 48)
+	menu_play_btn.add_theme_font_size_override("font_size", 22)
+	menu_play_btn.pressed.connect(_on_menu_play_pressed)
+	vbox.add_child(menu_play_btn)
+	
+	menu_restart_btn = Button.new()
+	menu_restart_btn.text = "REINICIAR (10º ANDAR)"
+	menu_restart_btn.custom_minimum_size = Vector2(0, 42)
+	menu_restart_btn.add_theme_font_size_override("font_size", 18)
+	menu_restart_btn.visible = false
+	menu_restart_btn.pressed.connect(_on_menu_restart_pressed)
+	vbox.add_child(menu_restart_btn)
+	
+	var controls_btn = Button.new()
+	controls_btn.text = "CONTROLES E SOBREVIVÊNCIA"
+	controls_btn.custom_minimum_size = Vector2(0, 42)
+	controls_btn.add_theme_font_size_override("font_size", 17)
+	controls_btn.pressed.connect(func():
+		if menu_controls_panel:
+			menu_controls_panel.visible = not menu_controls_panel.visible
+	)
+	vbox.add_child(controls_btn)
+	
+	var quit_btn = Button.new()
+	quit_btn.text = "SAIR"
+	quit_btn.custom_minimum_size = Vector2(0, 42)
+	quit_btn.add_theme_font_size_override("font_size", 18)
+	quit_btn.pressed.connect(func(): get_tree().quit())
+	vbox.add_child(quit_btn)
+	
+	# Expandable Controls & Survival Briefing Panel
+	menu_controls_panel = PanelContainer.new()
+	menu_controls_panel.visible = false
+	vbox.add_child(menu_controls_panel)
+	
+	var clbl = Label.new()
+	clbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	clbl.add_theme_font_size_override("font_size", 14)
+	clbl.add_theme_color_override("font_color", Color(0.82, 0.84, 0.80))
+	clbl.text = "[WASD] Andar   |   [SHIFT] Correr   |   [CTRL] Agachar\n[E] Porta / Interfone   |   [TAB] Notas   |   [ESC] Pausar\n\n• Viu algo errado? Volte ao andar de cima e espere a luz apagar.\n• Ouviu passos subindo? Esconda-se numa antecâmara.\n• Descubra os 4 símbolos para destravar o Térreo."
+	menu_controls_panel.add_child(clbl)
+	
+	# QoL Sliders: Mouse Sensitivity & Master Volume
+	var settings_box = VBoxContainer.new()
+	settings_box.add_theme_constant_override("separation", 4)
+	vbox.add_child(settings_box)
+	
+	var sens_lbl = Label.new()
+	sens_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sens_lbl.add_theme_font_size_override("font_size", 13)
+	sens_lbl.add_theme_color_override("font_color", Color(0.75, 0.78, 0.74))
+	sens_lbl.text = "SENSIBILIDADE DO MOUSE"
+	settings_box.add_child(sens_lbl)
+	
+	var sens_slider = HSlider.new()
+	sens_slider.min_value = 0.0010
+	sens_slider.max_value = 0.0055
+	sens_slider.step = 0.0002
+	sens_slider.value = 0.0026
+	sens_slider.value_changed.connect(func(v):
+		if player:
+			player.mouse_sensitivity = v
+	)
+	settings_box.add_child(sens_slider)
+	
+	var vol_lbl = Label.new()
+	vol_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vol_lbl.add_theme_font_size_override("font_size", 13)
+	vol_lbl.add_theme_color_override("font_color", Color(0.75, 0.78, 0.74))
+	vol_lbl.text = "VOLUME GERAL"
+	settings_box.add_child(vol_lbl)
+	
+	var vol_slider = HSlider.new()
+	vol_slider.min_value = -24.0
+	vol_slider.max_value = 6.0
+	vol_slider.step = 0.5
+	vol_slider.value = 0.0
+	vol_slider.value_changed.connect(func(v):
+		AudioServer.set_bus_volume_db(0, v)
+	)
+	settings_box.add_child(vol_slider)
+
+func _show_menu(is_pause: bool) -> void:
+	is_in_menu = true
+	menu_overlay.visible = true
+	menu_controls_panel.visible = false
+	ui_hint_label.visible = false
+	ui_interact_prompt.text = ""
+	player.controls_locked = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	
+	if is_pause:
+		menu_title_label.text = "PAUSADO"
+		menu_subtitle_label.text = "O BREU AGUARDA LÁ FORA"
+		menu_play_btn.text = "CONTINUAR"
+		menu_restart_btn.visible = true
+	else:
+		menu_title_label.text = "B R E U"
+		menu_subtitle_label.text = "10º ANDAR — ESCADA DE EMERGÊNCIA"
+		menu_play_btn.text = "JOGAR"
+		menu_restart_btn.visible = false
+
+func _on_menu_play_pressed() -> void:
+	if sfx_keypad_beep:
+		sfx_keypad_beep.pitch_scale = 0.72
+		sfx_keypad_beep.play()
+	is_in_menu = false
+	is_game_started = true
+	menu_overlay.visible = false
+	ui_hint_label.visible = true
+	player.controls_locked = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _on_menu_restart_pressed() -> void:
+	_start_new_run(false)
+	_on_menu_play_pressed()
+
+func _build_keypad_ui(canvas: CanvasLayer) -> void:
+	keypad_overlay = ColorRect.new()
+	keypad_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	keypad_overlay.color = Color(0.0, 0.0, 0.0, 0.72)
+	keypad_overlay.visible = false
+	canvas.add_child(keypad_overlay)
+	
+	var panel = PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	panel.custom_minimum_size = Vector2(340, 440)
+	panel.position = Vector2(-170, -220)
+	keypad_overlay.add_child(panel)
+	
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	panel.add_child(vbox)
+	
+	var title = Label.new()
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_color_override("font_color", Color(0.78, 0.85, 0.78))
+	title.text = "TRAVA NOTURNA — TÉRREO\n◈   ✕   ☾   ▲"
+	vbox.add_child(title)
+	
+	keypad_display_label = Label.new()
+	keypad_display_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	keypad_display_label.add_theme_font_size_override("font_size", 34)
+	keypad_display_label.add_theme_color_override("font_color", Color(0.35, 0.95, 0.45))
+	keypad_display_label.text = "_  _  _  _"
+	vbox.add_child(keypad_display_label)
+	
+	keypad_status_label = Label.new()
+	keypad_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	keypad_status_label.add_theme_font_size_override("font_size", 15)
+	keypad_status_label.add_theme_color_override("font_color", Color(0.75, 0.72, 0.65))
+	keypad_status_label.text = "Digite os 4 dígitos [0-9] ou clique"
+	vbox.add_child(keypad_status_label)
+	
+	var grid = GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	vbox.add_child(grid)
+	
+	var keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "CLR", "0", "OK"]
+	for k in keys:
+		var btn = Button.new()
+		btn.text = k
+		btn.custom_minimum_size = Vector2(96, 54)
+		btn.add_theme_font_size_override("font_size", 22)
+		btn.pressed.connect(_on_keypad_button_pressed.bind(k))
+		grid.add_child(btn)
+	
+	var close_btn = Button.new()
+	close_btn.text = "[ESC] Voltar para a Escada"
+	close_btn.custom_minimum_size = Vector2(0, 38)
+	close_btn.pressed.connect(_close_keypad_ui)
+	vbox.add_child(close_btn)
 
 func _setup_global_audio() -> void:
-	sfx_ambient_drone = AudioSynth.create_player(self, AudioSynth.make_ambient_building_drone(), "Master", -12.0)
+	sfx_ambient_drone = AudioSynth.create_player(self, AudioSynth.make_ambient_building_drone(), "Master", -2.5)
 	sfx_ambient_drone.play()
 	sfx_bulb_pop = AudioSynth.create_player(self, AudioSynth.make_bulb_pop(), "Stairwell", 2.0)
 	sfx_jumpscare_sting = AudioSynth.create_player(self, AudioSynth.make_jumpscare_sting(), "Scare", 1.5)
-	sfx_wake_pant = AudioSynth.create_player(self, AudioSynth.make_wake_pant(), "Master", -1.5)
-	sfx_whisper_neck = AudioSynth.create_player(self, AudioSynth.make_whisper_breath(), "Master", 2.0)
+	sfx_wake_pant = AudioSynth.create_player(self, AudioSynth.make_wake_pant(), "Master", 0.5)
+	sfx_whisper_neck = AudioSynth.create_player(self, AudioSynth.make_whisper_breath(), "Master", 2.5)
+	sfx_heartbeat = AudioSynth.create_player(self, AudioSynth.make_heartbeat_thump(), "Master", -8.0)
+	sfx_darkness_pressure = AudioSynth.create_player(self, AudioSynth.make_darkness_pressure_hum(), "Master", -45.0)
+	sfx_darkness_pressure.play()
+	sfx_distant_building = AudioSynth.create_player(self, AudioSynth.make_distant_thunder(), "Muffled", -1.5)
+	sfx_keypad_beep = AudioSynth.create_player(self, AudioSynth.make_keypad_beep(), "Master", -2.0)
+	sfx_keypad_error = AudioSynth.create_player(self, AudioSynth.make_keypad_error(), "Master", -1.0)
+	sfx_keypad_unlock = AudioSynth.create_player(self, AudioSynth.make_keypad_unlock(), "Stairwell", 1.0)
+	sfx_window_face_thud = AudioSynth.create_player(self, AudioSynth.make_window_face_thud(), "Stairwell", 2.0)
+	
+	# 3D emitter for the rare "Delayed Phantom Footsteps Behind You" micro-event!
+	sfx_phantom_behind = AudioStreamPlayer3D.new()
+	sfx_phantom_behind.stream = AudioSynth.make_footstep()
+	sfx_phantom_behind.bus = "Stairwell"
+	sfx_phantom_behind.unit_size = 4.0
+	sfx_phantom_behind.max_distance = 12.0
+	sfx_phantom_behind.volume_db = -1.5
+	add_child(sfx_phantom_behind)
+	
+	# Mobile 3D emitter for organic building one-shots (water drips from pipes, distant pipe settles)
+	sfx_ambient_3d_emitter = AudioStreamPlayer3D.new()
+	sfx_ambient_3d_emitter.unit_size = 4.0
+	sfx_ambient_3d_emitter.max_distance = 18.0
+	sfx_ambient_3d_emitter.attenuation_model = AudioStreamPlayer3D.ATTENUATION_LOGARITHMIC
+	add_child(sfx_ambient_3d_emitter)
 
 func _start_new_run(play_wake_breath: bool) -> void:
 	is_dying_or_resetting = false
@@ -249,8 +569,11 @@ func _start_new_run(play_wake_breath: bool) -> void:
 	lowest_floor_reached = TOP_FLOOR
 	ps1_shader_mat.set_shader_parameter("scare_intensity", 0.0)
 	
-	# Shuffled anomaly deck guarantees you encounter diverse hauntings (posters, shadow, vulto, window, upper stalker, doors) instead of repeats!
+	# Shuffled anomaly deck guarantees you encounter diverse hauntings!
 	var deck = [
+		StairwellSegment.AnomalyType.RED_LIGHT_SHOCK,
+		StairwellSegment.AnomalyType.RINGING_INTERCOM,
+		StairwellSegment.AnomalyType.BROKEN_SENSOR_DARK,
 		StairwellSegment.AnomalyType.HAUNTED_DECOR_POSTERS,
 		StairwellSegment.AnomalyType.STATIC_DARK_FIGURE,
 		StairwellSegment.AnomalyType.INVISIBLE_CAST_SHADOW,
@@ -293,6 +616,18 @@ func _start_new_run(play_wake_breath: bool) -> void:
 		
 		seg.setup_floor(f, anom, unlocked, (f == TOP_FLOOR))
 	
+	# Generate randomized 4-digit Padlock Code & scatter 4 Enigmatic Clues across floors 9..1!
+	discovered_clues.clear()
+	is_notebook_open = false
+	if notebook_panel:
+		notebook_panel.visible = false
+	_refresh_notebook_ui()
+	_scatter_enigmatic_clues_for_run()
+	is_keypad_open = false
+	entered_code = ""
+	if keypad_overlay:
+		keypad_overlay.visible = false
+	
 	# Reset player to 10th floor landing
 	player.controls_locked = false
 	player.global_position = Vector3(-0.35, 0.06, 1.2)
@@ -314,12 +649,36 @@ func _pick_random_anomaly(floor_num: int, exclude_anom: int) -> int:
 		StairwellSegment.AnomalyType.HANDS_ON_DOOR,
 		StairwellSegment.AnomalyType.INVISIBLE_CAST_SHADOW,
 		StairwellSegment.AnomalyType.HAUNTED_POSTER_WINDOW,
-		StairwellSegment.AnomalyType.HAUNTED_DECOR_POSTERS
+		StairwellSegment.AnomalyType.HAUNTED_DECOR_POSTERS,
+		StairwellSegment.AnomalyType.RED_LIGHT_SHOCK,
+		StairwellSegment.AnomalyType.RINGING_INTERCOM,
+		StairwellSegment.AnomalyType.BROKEN_SENSOR_DARK
 	]
 	if floor_num < TOP_FLOOR:
 		pool.append(StairwellSegment.AnomalyType.UPPER_FLOOR_STALKER)
 	pool.erase(exclude_anom)
 	return pool[randi() % pool.size()]
+
+func _on_clue_discovered(symbol: String, phrase: String) -> void:
+	discovered_clues[symbol] = phrase
+	_refresh_notebook_ui()
+	if ui_toast_label:
+		ui_toast_label.text = "Pista anotada: %s  [TAB]" % symbol
+		ui_toast_label.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		var tw = create_tween()
+		tw.tween_interval(2.8)
+		tw.tween_property(ui_toast_label, "modulate:a", 0.0, 0.6)
+
+func _refresh_notebook_ui() -> void:
+	if not notebook_label:
+		return
+	var txt = "ANOTAÇÕES — SENHA DO TÉRREO\n"
+	for sym in ["◈", "✕", "☾", "▲"]:
+		if discovered_clues.has(sym):
+			txt += "\n%s  %s" % [sym, discovered_clues[sym]]
+		else:
+			txt += "\n%s  ???" % sym
+	notebook_label.text = txt
 
 func _get_player_floor_index() -> int:
 	if not player:
@@ -336,8 +695,161 @@ func _get_nearest_door_segment() -> StairwellSegment:
 				return seg
 	return null
 
+func _scatter_enigmatic_clues_for_run() -> void:
+	var symbols = ["◈", "✕", "☾", "▲"]
+	var enigmas_by_digit = [
+		"O vazio do zero",
+		"Um único vulto na escada",
+		"Dois olhos atrás do vidro",
+		"Três batidas na porta de trás",
+		"Quatro passos no breu",
+		"Cinco dedos arranhando o ferro",
+		"Seis segundos até a luz morrer",
+		"Sete degraus abaixo de você",
+		"Oito batimentos no escuro",
+		"Nove portas trancadas"
+	]
+	
+	exit_code_digits.clear()
+	for i in range(4):
+		exit_code_digits.append(randi() % 10)
+	
+	# Pick 4 distinct floors between 9 and 1 for the 4 hiding spots
+	var candidate_floors = [9, 8, 7, 6, 5, 4, 3, 2, 1]
+	candidate_floors.shuffle()
+	
+	# Ensure the ANTECAMARA_INSIDE clue floor does NOT have a haunted door anomaly so the player can enter it!
+	var spots = [
+		StairwellSegment.ClueSpot.WALL_BLOOD,
+		StairwellSegment.ClueSpot.ANTECAMARA_INSIDE,
+		StairwellSegment.ClueSpot.POSTER_NOTE,
+		StairwellSegment.ClueSpot.WINDOW_FUSE
+	]
+	
+	var used_floors: Array[int] = []
+	for i in range(4):
+		var chosen_f = -1
+		for f in candidate_floors:
+			if f in used_floors:
+				continue
+			var seg = floors[f] as StairwellSegment
+			if spots[i] == StairwellSegment.ClueSpot.ANTECAMARA_INSIDE:
+				if seg.anomaly_type == StairwellSegment.AnomalyType.DOOR_WINDOW_WATCHER or seg.anomaly_type == StairwellSegment.AnomalyType.HANDS_ON_DOOR:
+					continue
+			chosen_f = f
+			break
+		if chosen_f == -1:
+			chosen_f = candidate_floors[i]
+		used_floors.append(chosen_f)
+		
+		var digit = exit_code_digits[i]
+		var seg_target = floors[chosen_f] as StairwellSegment
+		seg_target.set_enigmatic_clue(spots[i], symbols[i], enigmas_by_digit[digit])
+
+func _open_keypad_ui() -> void:
+	if is_dying_or_resetting or is_keypad_open:
+		return
+	is_keypad_open = true
+	entered_code = ""
+	player.controls_locked = true
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	keypad_overlay.visible = true
+	keypad_status_label.text = "Digite os 4 dígitos [0-9] ou clique"
+	keypad_status_label.add_theme_color_override("font_color", Color(0.75, 0.72, 0.65))
+	_refresh_keypad_display()
+
+func _close_keypad_ui() -> void:
+	if not is_keypad_open:
+		return
+	is_keypad_open = false
+	keypad_overlay.visible = false
+	player.controls_locked = false
+	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _refresh_keypad_display() -> void:
+	var out = ""
+	for i in range(4):
+		if i < entered_code.length():
+			out += entered_code[i]
+		else:
+			out += "_"
+		if i < 3:
+			out += "  "
+	keypad_display_label.text = out
+
+func _on_keypad_button_pressed(k: String) -> void:
+	if not is_keypad_open:
+		return
+	if k == "CLR":
+		entered_code = ""
+		if sfx_keypad_beep:
+			sfx_keypad_beep.pitch_scale = 0.8
+			sfx_keypad_beep.play()
+		_refresh_keypad_display()
+	elif k == "OK":
+		_submit_keypad_code()
+	else:
+		if entered_code.length() < 4:
+			entered_code += k
+			if sfx_keypad_beep:
+				sfx_keypad_beep.pitch_scale = randf_range(0.96, 1.04)
+				sfx_keypad_beep.play()
+			_refresh_keypad_display()
+			if entered_code.length() == 4:
+				_submit_keypad_code()
+
+func _submit_keypad_code() -> void:
+	var expected = "%d%d%d%d" % [exit_code_digits[0], exit_code_digits[1], exit_code_digits[2], exit_code_digits[3]]
+	if entered_code == expected:
+		if sfx_keypad_unlock:
+			sfx_keypad_unlock.play()
+		keypad_status_label.text = "ACESSO LIBERADO"
+		keypad_status_label.add_theme_color_override("font_color", Color(0.35, 1.0, 0.45))
+		await get_tree().create_timer(0.55).timeout
+		_close_keypad_ui()
+		(floors[0] as StairwellSegment).unlock_ground_floor_exit()
+	else:
+		if sfx_keypad_error:
+			sfx_keypad_error.play()
+		keypad_status_label.text = "SENHA INCORRETA — Procure os 4 símbolos acima"
+		keypad_status_label.add_theme_color_override("font_color", Color(0.95, 0.25, 0.22))
+		entered_code = ""
+		_refresh_keypad_display()
+
 func _unhandled_input(event: InputEvent) -> void:
+	if is_in_menu:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE and is_game_started:
+			_on_menu_play_pressed()
+		return
+	
+	if is_keypad_open:
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == KEY_ESCAPE:
+				_close_keypad_ui()
+			elif event.keycode == KEY_BACKSPACE:
+				if entered_code.length() > 0:
+					entered_code = entered_code.substr(0, entered_code.length() - 1)
+					_refresh_keypad_display()
+			elif event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+				_submit_keypad_code()
+			elif event.keycode >= KEY_0 and event.keycode <= KEY_9:
+				_on_keypad_button_pressed(str(event.keycode - KEY_0))
+			elif event.keycode >= KEY_KP_0 and event.keycode <= KEY_KP_9:
+				_on_keypad_button_pressed(str(event.keycode - KEY_KP_0))
+		return
+	
 	if is_dying_or_resetting or not player or player.controls_locked:
+		return
+	
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		_show_menu(true)
+		return
+	
+	# [TAB] Toggle Clue Notebook!
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_TAB:
+		is_notebook_open = not is_notebook_open
+		if notebook_panel:
+			notebook_panel.visible = is_notebook_open
 		return
 	
 	var pressed_interact = false
@@ -347,17 +859,21 @@ func _unhandled_input(event: InputEvent) -> void:
 		pressed_interact = true
 	
 	if pressed_interact:
+		var p_f = _get_player_floor_index()
+		if floors.has(p_f) and (floors[p_f] as StairwellSegment).can_interact_with_intercom(player.global_position):
+			(floors[p_f] as StairwellSegment).answer_ringing_intercom()
+			return
 		var seg = _get_nearest_door_segment()
 		if seg:
 			# Passing player.is_crouching prevents opening/closing the door while crouched!
 			seg.toggle_fire_door(player.is_crouching)
 	
-	# [F1] Debug: Cycle all 7 anomalies on the floor the player is currently standing on
+	# [F1] Debug: Cycle all 10 anomalies on the floor the player is currently standing on
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1:
 		var f = _get_player_floor_index()
 		if f > 0 and floors.has(f):
 			var seg = floors[f] as StairwellSegment
-			var next_a = (seg.anomaly_type + 1) % 8
+			var next_a = (seg.anomaly_type + 1) % 11
 			seg.set_anomaly_runtime(next_a)
 	
 	# [F2] Debug: Trigger the Progressive Pursuer Event from 2 floors below immediately!
@@ -387,22 +903,127 @@ func _on_request_upper_floor_anomaly(target_upper_floor: int) -> void:
 		seg_up.start_upper_stalker_descent()
 
 func _physics_process(delta: float) -> void:
+	if is_in_menu:
+		# Subtle slow atmospheric camera sway on the live 3D stairwell behind the title screen!
+		if player and not is_game_started:
+			var t_sec = Time.get_ticks_msec() * 0.001
+			player.rotation.y = deg_to_rad(18.0 + sin(t_sec * 0.35) * 6.0)
+			player.head_pivot.rotation.x = deg_to_rad(-10.0 + sin(t_sec * 0.25) * 2.5)
+		return
 	if is_dying_or_resetting or not player:
 		return
 	
 	_update_interact_prompt()
+	_update_ambient_soundscape(delta)
 	_update_pursuer_event_spawner(delta)
 	_update_pursuer_state_machine(delta)
 
+func _update_ambient_soundscape(delta: float) -> void:
+	var p_floor = _get_player_floor_index()
+	var p_seg = floors[p_floor] as StairwellSegment if floors.has(p_floor) else null
+	var closed_in_antecamara = (p_seg != null and p_seg.player_inside_antecamara and not p_seg.is_fire_door_open)
+	
+	# 1. Dynamic Acoustics + Crouch Vignette Feedback
+	player.set_inside_small_room(closed_in_antecamara)
+	var target_vig = 0.78 if player.is_crouching else 0.55
+	current_vignette = lerp(current_vignette, target_vig, delta * 7.0)
+	ps1_shader_mat.set_shader_parameter("vignette_strength", current_vignette)
+	
+	if sfx_ambient_drone:
+		sfx_ambient_drone.bus = "Muffled" if closed_in_antecamara else "Master"
+		var target_drone_db = -11.5 if closed_in_antecamara else -2.5
+		sfx_ambient_drone.volume_db = lerp(sfx_ambient_drone.volume_db, target_drone_db, delta * 4.0)
+	
+	# 1b. Rare Micro-Event: "Delayed Phantom Footsteps Behind You" when stopping on stairs!
+	phantom_step_cooldown = max(0.0, phantom_step_cooldown - delta)
+	if player_was_moving and not player.is_moving_now and not closed_in_antecamara and phantom_step_cooldown <= 0.0:
+		if randf() < 0.28:
+			phantom_step_cooldown = randf_range(28.0, 46.0)
+			_trigger_delayed_phantom_steps_behind()
+	player_was_moving = player.is_moving_now
+	
+	# 2. Pitch-Black Silence / Ear-Pressure Tension when waiting in total dark (Option 3)
+	var in_pitch_dark = (p_seg != null and not closed_in_antecamara and not p_seg.main_light_on and not p_seg.mid_light_on)
+	var target_dark = 1.0 if in_pitch_dark else 0.0
+	darkness_pressure_level = move_toward(darkness_pressure_level, target_dark, delta * (0.55 if in_pitch_dark else 2.8))
+	if sfx_darkness_pressure:
+		sfx_darkness_pressure.volume_db = lerp(-46.0, -4.5, darkness_pressure_level)
+	
+	# 3. Distant Night Thunder (+ Window Lightning Flash!) & Old Elevator Machinery (Option 2)
+	distant_building_timer -= delta
+	if distant_building_timer <= 0.0 and sfx_distant_building and not sfx_distant_building.playing:
+		distant_building_timer = randf_range(18.0, 32.0)
+		if randf() < 0.62:
+			sfx_distant_building.stream = AudioSynth.make_distant_thunder()
+			sfx_distant_building.volume_db = randf_range(-2.5, 1.5)
+			sfx_distant_building.pitch_scale = randf_range(0.85, 1.08)
+			if p_seg:
+				p_seg.trigger_window_lightning(randf() < 0.45)
+		else:
+			sfx_distant_building.stream = AudioSynth.make_elevator_machinery()
+			sfx_distant_building.volume_db = randf_range(-4.0, 0.5)
+			sfx_distant_building.pitch_scale = randf_range(0.90, 1.05)
+		sfx_distant_building.play()
+	
+	# 4. Organic 3D building life sounds (water drips in corner pipe, distant thermal pipe settles)
+	ambient_oneshot_timer -= delta
+	if ambient_oneshot_timer <= 0.0 and sfx_ambient_3d_emitter and not sfx_ambient_3d_emitter.playing:
+		ambient_oneshot_timer = randf_range(5.0, 11.5)
+		if p_seg:
+			if randf() < 0.65:
+				sfx_ambient_3d_emitter.global_position = p_seg.to_global(Vector3(-2.05, randf_range(-2.2, 1.2), randf_range(-5.0, 2.2)))
+				sfx_ambient_3d_emitter.stream = AudioSynth.make_water_drip()
+				sfx_ambient_3d_emitter.bus = "Stairwell"
+				sfx_ambient_3d_emitter.volume_db = randf_range(-1.5, 2.0)
+				sfx_ambient_3d_emitter.pitch_scale = randf_range(0.88, 1.18)
+				sfx_ambient_3d_emitter.play()
+			else:
+				var y_off = randf_range(-6.0, 6.0)
+				sfx_ambient_3d_emitter.global_position = player.global_position + Vector3(randf_range(-2.0, 2.0), y_off, randf_range(-4.0, 2.0))
+				sfx_ambient_3d_emitter.stream = AudioSynth.make_pipe_settle()
+				sfx_ambient_3d_emitter.bus = "Muffled"
+				sfx_ambient_3d_emitter.volume_db = randf_range(-2.0, 1.5)
+				sfx_ambient_3d_emitter.pitch_scale = randf_range(0.85, 1.12)
+				sfx_ambient_3d_emitter.play()
+	
+	# 5. Dynamic Heartbeat ONLY when Pursuer is dangerously close (< 9.5m) or testing your door!
+	if pursuer_state != PursuerState.INACTIVE and pursuer_node.visible:
+		var dist = pursuer_node.global_position.distance_to(player.global_position)
+		if dist < 9.5 or pursuer_state == PursuerState.CHECKING_DOOR_WINDOW or pursuer_state == PursuerState.FORCING_DOOR:
+			var intensity = clamp(1.0 - (dist / 9.5), 0.15, 1.0)
+			if pursuer_state == PursuerState.FORCING_DOOR:
+				intensity = 1.0
+			heartbeat_timer -= delta
+			if heartbeat_timer <= 0.0:
+				heartbeat_timer = lerp(1.15, 0.56, intensity)
+				if sfx_heartbeat:
+					sfx_heartbeat.volume_db = lerp(-15.0, -3.5, intensity)
+					sfx_heartbeat.pitch_scale = lerp(0.95, 1.12, intensity)
+					sfx_heartbeat.play()
+	else:
+		heartbeat_timer = 0.0
+
 func _update_interact_prompt() -> void:
+	var p_f = _get_player_floor_index()
+	if floors.has(p_f) and (floors[p_f] as StairwellSegment).can_interact_with_intercom(player.global_position):
+		ui_interact_prompt.text = "[E] Atender Interfone"
+		if ui_crosshair:
+			ui_crosshair.color = Color(0.95, 0.35, 0.30, 0.85)
+		return
+	
 	var seg = _get_nearest_door_segment()
 	if not seg:
 		ui_interact_prompt.text = ""
+		if ui_crosshair:
+			ui_crosshair.color = Color(0.85, 0.88, 0.85, 0.28)
 		return
+	
+	if ui_crosshair:
+		ui_crosshair.color = Color(0.95, 0.94, 0.82, 0.82)
 	
 	var holding = Input.is_key_pressed(KEY_E) or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 	if seg.is_ground_floor:
-		ui_interact_prompt.text = "[E] SAIR DO PRÉDIO (TÉRREO)"
+		ui_interact_prompt.text = "[E] Trava Noturna — Digitar Senha"
 	elif seg.is_door_being_forced and seg.player_inside_antecamara:
 		ui_interact_prompt.text = "SEGURANDO A PORTA!" if holding else "SEGURE [E] PARA TRAVAR A PORTA!"
 	elif player.is_crouching and seg.player_inside_antecamara and not seg.is_fire_door_open:
@@ -415,6 +1036,23 @@ func _update_interact_prompt() -> void:
 		ui_interact_prompt.text = "[E] Abrir Porta"
 	else:
 		ui_interact_prompt.text = "[E] Porta Corta-Fogo"
+
+func _trigger_delayed_phantom_steps_behind() -> void:
+	if not player or not sfx_phantom_behind:
+		return
+	var back_pos = player.global_position + player.global_transform.basis.z.normalized() * 1.45
+	sfx_phantom_behind.global_position = back_pos
+	await get_tree().create_timer(0.28).timeout
+	if is_in_menu or is_dying_or_resetting:
+		return
+	sfx_phantom_behind.pitch_scale = randf_range(0.88, 0.96)
+	sfx_phantom_behind.play()
+	await get_tree().create_timer(0.36).timeout
+	if is_in_menu or is_dying_or_resetting:
+		return
+	sfx_phantom_behind.global_position = player.global_position + player.global_transform.basis.z.normalized() * 0.85
+	sfx_phantom_behind.pitch_scale = randf_range(0.94, 1.02)
+	sfx_phantom_behind.play()
 
 # =============================================================================
 # PROGRESSIVE AUDIO-DRIVEN PURSUER SYSTEM
@@ -512,6 +1150,10 @@ func _update_pursuer_state_machine(delta: float) -> void:
 					pursuer_target_floor = p_floor
 					pursuer_state = PursuerState.CHECKING_DOOR_WINDOW
 					pursuer_state_timer = 2.6
+					# Sudden startling glass thud as he presses his pale face against the window!
+					if sfx_window_face_thud:
+						sfx_window_face_thud.play()
+					player.camera_shake = 0.032
 					return
 			
 			_move_pursuer_along_waypoints(delta, 1.85, 0.58)

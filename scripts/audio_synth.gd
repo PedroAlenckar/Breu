@@ -38,7 +38,7 @@ static func setup_audio_buses() -> void:
 		AudioServer.set_bus_send(idx, "Master")
 		
 		var lpf = AudioEffectLowPassFilter.new()
-		lpf.cutoff_hz = 540.0
+		lpf.cutoff_hz = 920.0
 		lpf.resonance = 0.45
 		AudioServer.add_bus_effect(idx, lpf)
 		
@@ -588,5 +588,366 @@ static func make_jumpscare_sting() -> AudioStreamWAV:
 			var stat = raw * 0.50 * exp(-t * 1.4)
 			var val = clamp((sub + saw1 + saw2 + stat) * env, -1.0, 1.0)
 			data.encode_s16(i * 2, int(val * 32000.0))
+		return _make_wav(data)
+	)
+
+# =============================================================================
+# AMBIENT SOUNDSCAPE (Rain outside windows, water drips, pipe settles, heartbeat)
+# =============================================================================
+static func make_night_rain_window() -> AudioStreamWAV:
+	return _get_or_make("ambient_night_rain", func():
+		# Soft, continuous muffled night rain & wind outside the stairwell windows (looped)
+		var duration = 3.5
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 2048
+		var lp_rain = 0.0
+		var lp_wind = 0.0
+		var hp_rain = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			# Soft rain hiss (band-passed noise)
+			lp_rain = lerp(lp_rain, raw, 0.28)
+			hp_rain = lerp(hp_rain, lp_rain, 0.08)
+			var rain = (lp_rain - hp_rain) * 0.75
+			# Slow rolling night wind swell (loop-seamless via TAU)
+			lp_wind = lerp(lp_wind, raw, 0.03)
+			var swell = 0.65 + 0.35 * sin((t / duration) * TAU)
+			# Occasional tiny raindrop patters on glass
+			var drop = 0.0
+			if rng.randf() < 0.0018:
+				drop = rng.randf_range(0.25, 0.55)
+			var val = clamp((rain * 0.65 + lp_wind * 1.4 * swell + drop * 0.35) * 0.55, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 12500.0))
+		return _make_wav(data, true)
+	)
+
+static func make_water_drip() -> AudioStreamWAV:
+	return _get_or_make("ambient_water_drip", func():
+		# Realistic hollow water droplet hitting wet concrete ("plip!") — quick upward pitch chirp
+		var duration = 0.14
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var phase = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			# Natural bubble-pop upward frequency sweep (680Hz -> 1650Hz)
+			var freq = 680.0 + (t / duration) * 980.0
+			phase += TAU * freq / SAMPLE_RATE
+			var env = exp(-t * 42.0) * min(t / 0.005, 1.0)
+			var val = sin(phase) * env * 0.7
+			data.encode_s16(i * 2, int(clamp(val, -1.0, 1.0) * 14000.0))
+		return _make_wav(data)
+	)
+
+static func make_pipe_settle() -> AudioStreamWAV:
+	return _get_or_make("ambient_pipe_settle", func():
+		# Subtle old-building structural/pipe thermal settle far in the shaft (very organic, low-key)
+		var duration = 0.85
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 4096
+		var lp1 = 0.0
+		var lp2 = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp1 = lerp(lp1, raw, 0.04)
+			lp2 = lerp(lp2, raw, 0.16)
+			var groan_env = sin((t / duration) * PI)
+			var tick = exp(-abs(t - 0.18) * 90.0) * (raw - lp2) * 0.55
+			var val = clamp((lp1 * 1.3 * groan_env + tick) * 0.5, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 14500.0))
+		return _make_wav(data)
+	)
+
+static func make_heartbeat_thump() -> AudioStreamWAV:
+	return _get_or_make("player_heartbeat", func():
+		# Soft visceral double-beat "lub-dub" when Pursuer is dangerously close
+		var duration = 0.72
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 8080
+		var lp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			lp = lerp(lp, rng.randf_range(-1.0, 1.0), 0.03)
+			var beat1 = exp(-t * 22.0) * sin(t * TAU * 48.0) * min(t / 0.015, 1.0)
+			var beat2 = 0.0
+			if t > 0.21:
+				var dt = t - 0.21
+				beat2 = exp(-dt * 26.0) * sin(dt * TAU * 44.0) * min(dt / 0.015, 1.0) * 0.72
+			var val = clamp((beat1 + beat2) * 0.75 + lp * 0.25 * (abs(beat1) + abs(beat2)), -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 22000.0))
+		return _make_wav(data)
+	)
+
+static func make_distant_thunder() -> AudioStreamWAV:
+	return _get_or_make("ambient_distant_thunder", func():
+		# Deep, rolling distant thunder rumble muffled through thick concrete walls
+		var duration = 4.2
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 3030
+		var lp1 = 0.0
+		var lp2 = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp1 = lerp(lp1, raw, 0.022)
+			lp2 = lerp(lp2, lp1, 0.028)
+			# Natural double-roll thunder envelope (initial swell + secondary distant roll)
+			var env = sin(clamp(t / 1.4, 0.0, 1.0) * PI * 0.5) * exp(-max(0.0, t - 0.85) * 0.85)
+			var roll = 0.72 + 0.28 * sin(t * 3.8 + sin(t * 1.9))
+			var val = clamp(lp2 * 4.2 * env * roll, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 24000.0))
+		return _make_wav(data)
+	)
+
+static func make_elevator_machinery() -> AudioStreamWAV:
+	return _get_or_make("ambient_elevator_machinery", func():
+		# Distant old building elevator motor winding down + heavy steel cable groan + relay clunk
+		var duration = 3.2
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 6060
+		var lp = 0.0
+		var phase = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp = lerp(lp, raw, 0.06)
+			# Winding down motor pitch from 88Hz -> 44Hz over 2.4s
+			var motor_env = clamp(1.0 - t / 2.5, 0.0, 1.0) * min(t / 0.25, 1.0)
+			var freq = lerp(88.0, 44.0, clamp(t / 2.4, 0.0, 1.0))
+			phase += TAU * freq / SAMPLE_RATE
+			var motor = (sin(phase) * 0.5 + sin(phase * 2.0) * 0.25) * motor_env * 0.45
+			# Heavy brake clunk at t = 2.45s
+			var clunk = 0.0
+			if t > 2.45:
+				var dt = t - 2.45
+				clunk = lp * 2.6 * exp(-dt * 14.0)
+			var val = clamp(motor + lp * 0.65 * motor_env + clunk, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 19000.0))
+		return _make_wav(data)
+	)
+
+static func make_sprint_breath() -> AudioStreamWAV:
+	return _get_or_make("player_sprint_breath", func():
+		# Soft, tired single human exhale after running up/down stairs
+		var duration = 0.68
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 711
+		var lp = 0.0
+		var bp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp = lerp(lp, raw, 0.14)
+			bp = lerp(bp, lp, 0.05)
+			var env = sin((t / duration) * PI)
+			var breath = (lp - bp) * 2.3 * env * 0.55
+			data.encode_s16(i * 2, int(clamp(breath, -1.0, 1.0) * 18000.0))
+		return _make_wav(data)
+	)
+
+static func make_darkness_pressure_hum() -> AudioStreamWAV:
+	return _get_or_make("darkness_silence_pressure", func():
+		# Ultra-subtle heavy silence / ear-pressure tension tone when standing in pitch black (looped)
+		var duration = 2.0
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 9001
+		var lp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			lp = lerp(lp, rng.randf_range(-1.0, 1.0), 0.02)
+			# Very faint low pressure + barely-there high silence ring (seamless loop)
+			var sub = sin(t * TAU * 38.0) * 0.35
+			var ring = sin(t * TAU * 2100.0) * 0.035
+			var val = clamp((sub + lp * 0.8 + ring) * 0.45, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 11000.0))
+		return _make_wav(data, true)
+	)
+
+static func make_keypad_beep() -> AudioStreamWAV:
+	return _get_or_make("keypad_beep", func():
+		var duration = 0.075
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var env = exp(-t * 28.0) * min(t / 0.004, 1.0)
+			var tone = sin(t * TAU * 1380.0) * 0.65 + sin(t * TAU * 2760.0) * 0.15
+			data.encode_s16(i * 2, int(clamp(tone * env, -1.0, 1.0) * 18000.0))
+		return _make_wav(data)
+	)
+
+static func make_keypad_error() -> AudioStreamWAV:
+	return _get_or_make("keypad_error", func():
+		var duration = 0.36
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var pulse = 1.0 if (t < 0.14 or t > 0.19) else 0.0
+			var buzz = (fmod(t * 210.0, 1.0) * 2.0 - 1.0) * 0.45 * pulse
+			data.encode_s16(i * 2, int(clamp(buzz, -1.0, 1.0) * 20000.0))
+		return _make_wav(data)
+	)
+
+static func make_keypad_unlock() -> AudioStreamWAV:
+	return _get_or_make("keypad_unlock", func():
+		# Two-tone chime + heavy electromagnetic bolt releasing
+		var duration = 0.55
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 2026
+		var lp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var val = 0.0
+			if t < 0.14:
+				val += sin(t * TAU * 980.0) * 0.45 * exp(-t * 14.0)
+			elif t < 0.30:
+				var dt = t - 0.14
+				val += sin(dt * TAU * 1480.0) * 0.50 * exp(-dt * 12.0)
+			if t > 0.28:
+				var dt2 = t - 0.28
+				lp = lerp(lp, rng.randf_range(-1.0, 1.0), 0.18)
+				val += lp * 2.6 * exp(-dt2 * 24.0)
+			data.encode_s16(i * 2, int(clamp(val, -1.0, 1.0) * 24000.0))
+		return _make_wav(data)
+	)
+
+static func make_red_light_shock_sting() -> AudioStreamWAV:
+	return _get_or_make("red_light_shock_sting", func():
+		# Sudden blood-chilling horror sting: heavy electrical surge + dissonant brass/metal shriek + sub-bass slam!
+		var duration = 1.15
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 6661
+		var lp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp = lerp(lp, raw, 0.06)
+			# Instant slam + eerie decaying dissonant tritone horror chord
+			var env = exp(-t * 2.1) * min(t / 0.006, 1.0)
+			var slam = lp * 3.4 * exp(-t * 9.0)
+			var tritone = (sin(t * TAU * 155.0) * 0.45 + sin(t * TAU * 220.0) * 0.40 + sin(t * TAU * 311.0) * 0.35 + sin(t * TAU * 622.0) * 0.20)
+			var surge = raw * 0.65 * exp(-t * 14.0)
+			var val = clamp((slam + tritone * 0.72 + surge) * env, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 31500.0))
+		return _make_wav(data)
+	)
+
+static func make_intercom_ring() -> AudioStreamWAV:
+	return _get_or_make("intercom_ring", func():
+		# Piercing retro Brazilian building intercom wall-buzzer ring (2 sharp bursts)
+		var duration = 1.15
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var active = (t < 0.42) or (t > 0.56 and t < 0.98)
+			var val = 0.0
+			if active:
+				var trill = 0.5 + 0.5 * sin(t * TAU * 26.0)
+				var buzz = (sin(t * TAU * 860.0) * 0.5 + sin(t * TAU * 1290.0) * 0.35 + (fmod(t * 430.0, 1.0) * 2.0 - 1.0) * 0.25)
+				val = buzz * (0.45 + 0.55 * trill) * 0.65
+			data.encode_s16(i * 2, int(clamp(val, -1.0, 1.0) * 24000.0))
+		return _make_wav(data)
+	)
+
+static func make_intercom_static_voice() -> AudioStreamWAV:
+	return _get_or_make("intercom_static_voice", func():
+		# Harsh intercom speaker static + eerie garbled low vocal rasping
+		var duration = 1.65
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 4041
+		var lp = 0.0
+		var bp = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp = lerp(lp, raw, 0.35)
+			bp = lerp(bp, lp, 0.10)
+			var static_crackle = (lp - bp) * 0.85
+			# Syllabic creepy rasp ("não... olha... pra trás...")
+			var syll = max(0.0, sin(t * TAU * 2.4)) * exp(-abs(t - 0.85) * 1.4)
+			var vocal = sin(t * TAU * (115.0 + sin(t * 22.0) * 24.0)) * syll * 0.55
+			var env = min(t / 0.04, 1.0) * clamp((duration - t) / 0.12, 0.0, 1.0)
+			data.encode_s16(i * 2, int(clamp((static_crackle * 0.55 + vocal) * env, -1.0, 1.0) * 25000.0))
+		return _make_wav(data)
+	)
+
+static func make_short_circuit_spark() -> AudioStreamWAV:
+	return _get_or_make("short_circuit_spark", func():
+		# Sharp electrical ballast short-circuit buzz + glass pop (when broken sensor fails in dark)
+		var duration = 0.42
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 9898
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			var arc = raw * (0.5 + 0.5 * sin(t * TAU * 120.0)) * exp(-t * 9.0)
+			var pop = 0.0
+			if t > 0.24:
+				pop = raw * exp(-(t - 0.24) * 55.0) * 1.3
+			data.encode_s16(i * 2, int(clamp((arc * 0.7 + pop) * 0.9, -1.0, 1.0) * 29000.0))
+		return _make_wav(data)
+	)
+
+static func make_window_face_thud() -> AudioStreamWAV:
+	return _get_or_make("window_face_thud", func():
+		# Sudden startling dull thud against wire-glass when Pursuer presses face to the Antecâmara window!
+		var duration = 0.28
+		var samples = int(SAMPLE_RATE * duration)
+		var data = PackedByteArray()
+		data.resize(samples * 2)
+		var rng = RandomNumberGenerator.new()
+		rng.seed = 3141
+		var lp1 = 0.0
+		var lp2 = 0.0
+		for i in range(samples):
+			var t = float(i) / SAMPLE_RATE
+			var raw = rng.randf_range(-1.0, 1.0)
+			lp1 = lerp(lp1, raw, 0.06)
+			lp2 = lerp(lp2, raw, 0.35)
+			var glass_ring = (lp2 - lp1) * 1.2
+			var env = exp(-t * 28.0) * min(t / 0.003, 1.0)
+			var val = clamp((lp1 * 2.8 + glass_ring) * env, -1.0, 1.0)
+			data.encode_s16(i * 2, int(val * 29000.0))
 		return _make_wav(data)
 	)

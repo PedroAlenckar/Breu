@@ -7,78 +7,64 @@
 ## 1. Conceito & Identidade Visual
 * **Nome do Jogo:** **BREU**
 * **Engine:** Godot **4.5.1** (Forward Plus)
-* **Estética:** Terror psicológico 3D estilo **PlayStation 1 / GameCube** (resolução interna `320x240`, *Bayer 4x4 dithering*, filtro `Nearest` sem anti-aliasing, texturas granuladas procedurais e vinheta claustrofóbica).
-* **Premissa:** Você está preso na escada de emergência pressurizada de um prédio escuro, começando no **10º Andar**, e precisa descer até o **Térreo (0º Andar)** para escapar.
+* **Estética:** Terror psicológico 3D estilo **PlayStation 1 / GameCube** (resolução interna `320x240`, *Bayer 4x4 dithering*, filtro `Nearest` sem anti-aliasing, texturas granuladas procedurais e vinheta claustrofóbica dinâmica que fecha ao agachar).
+* **Premissa:** Uma madrugada de tempestade e apagão. O elevador parou e a porta do **Térreo** está travada por uma **Trava Noturna de 4 dígitos**. Você começa no **10º Andar** e precisa descer pela escadaria pressurizada sobrevivendo às assombrações, ao Perseguidor e caçando as **4 pistas enigmáticas pintadas em sangue** (`◈`, `✕`, `☾`, `▲`) escondidas pelos andares (incluindo dentro das Antecâmaras) para destravar a saída.
 * **Pilares de Terror:**
-  * **Escuridão & Sensor de Presença:** A iluminação depende exclusivamente das luminárias fluorescentes acionadas por sensor de movimento. Se ficar parado por ~4,6s, a luz apaga (*click*) e você fica no breu; ao voltar a se mexer, há um pequeno delay (~0,34s) com o LED do sensor piscando antes de a lâmpada piscar e reacender.
-  * **Prédio Físico Real (Euclidiano):** Os **10 andares (10º ao Térreo)** existem fisicamente empilhados sem teletransporte. A grade de ferro só existe no topo (**10º Andar**). Nos demais andares você sobe e desce livremente.
-  * **Morte Seca (Opção A):** Sem telas vermelhas explicativas ou textos de "Game Over". Quando você morre, acontece um susto 3D rápido com distorção PS1 → corte seco para o preto absoluto → você acorda ofegante de volta no **10º Andar**.
+  * **Escuridão & Sensor de Presença:** Iluminação depende das lâmpadas fluorescentes por sensor de movimento. Parado por ~4,6s, a luz apaga (*click*) e entra uma pressão de silêncio nos ouvidos; ao voltar a se mexer, o LED pisca e há um delay de ~0,34s antes de a lâmpada reacender.
+  * **Prédio Físico Real (Euclidiano):** Todos os **10 andares (10º ao Térreo)** existem fisicamente empilhados sem teletransporte. A grade de ferro só existe no topo (**10º Andar**, rente ao piso e fechada atrás). Nos demais andares você sobe e desce livremente.
+  * **Morte Seca (Opção A):** Sem telas vermelhas explicativas. Susto 3D rápido com glitch PS1 → corte seco para o preto absoluto → você acorda ofegante de volta no **10º Andar**.
 
 ---
 
-## 2. Regras de Gameplay (Estado Atual)
+## 2. Regras de Gameplay & Narrativa (Estado Atual)
 
-### A. Assombrações & Purificação pelo Breu
-* Ao descer para um andar, observe atentamente os detalhes (porta corta-fogo, pôsteres, quadro de avisos, placa direcional `↓ SAÍDA`, cavalete de piso molhado, janela noturna, patamar intermediário, sombras e som).
-* **Se houver uma assombração no andar:**
-  * **NÃO continue descendo.** Se você passar reto pelo 2º lance de escada ignorando a assombração, as luzes estouram (`*POP!*`), há meio segundo de breu, um sussurro na nuca e a câmera vira 180º à força para o susto 3D (*"O Puxão no Breu"*).
-  * **Como sobreviver:** Dê meia-volta e **suba para o andar de cima**, esperando a luz do sensor do andar assombrado apagar (`*CLICK*`). Quando o andar entra no breu total, ele é re-sorteado: **70% de chance de ficar purificado (limpo)** e **30% de chance de trocar para outra assombração** (mantendo a paranoia ao descer de novo).
+### A. A Trava Noturna do Térreo & Pistas Enigmáticas em Sangue
+* No **Térreo (0º Andar)**, ao pressionar **`[E]`** na saída, abre um **Teclado Numérico de 4 Dígitos** (clique ou teclado `0–9`, `Backspace`, `Enter`, `ESC`).
+* Um bilhete ao lado mostra a ordem dos 4 símbolos: **`◈   ✕   ☾   ▲`**.
+* A cada partida, 4 números aleatórios são sorteados e escondidos em 4 andares diferentes (9º..1º) com **caligrafia trêmula feita à mão em sangue** (com gotas escorrendo e marcas de mãos) em 4 esconderijos: parede de concreto do patamar, **parede interna de uma Antecâmara destrancada**, abaixo de um pôster, e próximo à janela noturna/quadro de luz.
+* **Bloco de Notas (`[TAB]`):** Ao chegar perto de uma pista, ela é anotada automaticamente para consulta rápida com `TAB`.
+* **Storytelling Ambiental:** Cada andar (10º ao Térreo) possui um **Mural de Avisos único** contando a história daquela madrugada, além de decorações variadas por andar (múltiplos pôsteres retrô, caixas de mudança, balde e esfregão do zelador, cadeira velha, poças d'água, interfone vermelho, hidrante e quadro de luz).
 
-### B. As 7 Anomalias Implementadas
-Sorteio via **baralho embaralhado** a cada partida (evita repetições seguidas):
-1. `DOOR_WINDOW_WATCHER`: Rosto pálido observando atrás do vidro da porta corta-fogo; dá batidas no vidro (`*TOC-TOC*`) e bate forte na porta se ignorado.
-2. `STATIC_DARK_FIGURE`: Vulto escuro parado no patamar intermediário; ao se aproximar, ele vira e desce as escadas abaixo com passos ecoando.
-3. `HANDS_ON_DOOR`: Porta corta-fogo começa entreaberta com mãos 3D segurando a beirada; quando você se aproxima ou começa a descer, as mãos recolhem e a porta fecha sozinha com barulho de trava.
-4. `INVISIBLE_CAST_SHADOW`: Sombra humana 3D real (`SHADOWS_ONLY`) projetada pela lâmpada fluorescente normal na parede de concreto, inclinando a cabeça — sem nenhum corpo visível no patamar.
-5. `HAUNTED_POSTER_WINDOW`: Pôster de retrato na parede se deforma, quadro de avisos muda e uma figura pálida com mãos no vidro observa e bate na janela noturna gradeada do patamar intermediário.
-6. `UPPER_FLOOR_STALKER`: Quando você começa a descer, a luz do **andar de cima** acende sozinha e algo começa a descer a escada atrás de você com passos pesados.
-7. `HAUNTED_DECOR_POSTERS`: Ambos os pôsteres (retrato + diagrama de rota de fuga) ficam assombrados, a placa `↓ SAÍDA` vira `↑ NÃO DESÇA` em vermelho, o cavalete amarelo de piso molhado aparece derrubado e o LED do quadro de luz fica vermelho.
+### B. As 10 Anomalias + 2 Micro-Eventos
+Sorteio via **baralho embaralhado** a cada partida. Se ignorar uma assombração e passar reto pelo 2º lance → morte 3D (*"O Puxão no Breu"*). Para sobreviver, **suba de volta para o andar de cima e espere a luz do andar assombrado apagar** (70% de chance de purificar, 30% de trocar para outra assombração):
+1. `DOOR_WINDOW_WATCHER`: Rosto pálido no vidro da porta corta-fogo (`*TOC-TOC*` e batida forte se ignorado).
+2. `STATIC_DARK_FIGURE`: Vulto parado no patamar intermediário que vira e desce as escadas abaixo com passos ecoando.
+3. `HANDS_ON_DOOR`: Porta entreaberta com mãos 3D segurando a beirada que puxam e fecham a porta sozinha.
+4. `INVISIBLE_CAST_SHADOW`: Sombra humana 3D real (`SHADOWS_ONLY`) projetada na parede sem nenhum corpo visível.
+5. `HAUNTED_POSTER_WINDOW`: Pôsteres se deformam + figura pálida com mãos batendo na janela noturna gradeada.
+6. `UPPER_FLOOR_STALKER`: Luz do andar de cima acende sozinha e passos descem atrás de você.
+7. `HAUNTED_DECOR_POSTERS`: Todos os pôsteres do andar ficam assombrados, placa `↓ SAÍDA` vira `↑ NÃO DESÇA`, cavalete amarelo derrubado e LED do quadro de luz vermelho.
+8. `RED_LIGHT_SHOCK`: As duas luzes do andar acendem subitamente em vermelho-sangue forte com acorde/impacto assustador e tremor de câmera.
+9. `RINGING_INTERCOM`: O interfone vermelho na parede toca sozinho (`*TRIIIIIM!*`); ao atender (`[E]`), sai estática/voz distorcida e as luzes apagam.
+10. `BROKEN_SENSOR_DARK`: O sensor do patamar intermediário dá um curto-circuito com faísca e não acende, deixando breu total com respiração oca lá embaixo.
+
+* **Micro-Eventos:**
+  * **Relâmpagos na Janela:** Trovões distantes disparam clarões azulados nas janelas do patamar (às vezes revelando um rosto colado do lado de fora por 0,16s!).
+  * **Passos Atrasados ("O Eco"):** Raramente, quando você para de andar na escada, ouve mais 2 passos secos colando atrás das suas costas.
 
 ### C. O Perseguidor Progressivo & A Antecâmara (Defesa Opção C)
-* **Portas Corta-Fogo:** Portas com anomalias na própria porta ficam **sempre trancadas**. As demais são sorteadas aleatoriamente a cada partida (garantindo no máximo 2 trancadas seguidas).
-* **Evento do Perseguidor (Raro & Guiado por Áudio):**
-  1. Você ouve uma **porta metálica bater com força 2 andares abaixo**.
-  2. Começam **passos humanos lentos subindo a escada** (abafados e baixinhos de longe, ficando mais altos e nítidos conforme ele sobe e acende os sensores dos andares abaixo!).
-  3. Você precisa correr até uma **Antecâmara destrancada**, entrar e fechar a porta (`[E]`).
-  4. **Defesa (Opção C):**
-     * **Agache (`CTRL` ou `C`)** no ponto cego (fora da visão da janelinha de vidro). Enquanto agachado, apertar `[E]` **nunca abre a porta** (apenas trava!).
-     * A luz lá fora permanece acesa enquanto ele espia na janela.
-     * Se ele testar/forçar a porta (a porta treme com som de impacto), **segure `[E]`** para mantê-la travada até ele desistir.
-  5. Ao desistir, ele sobe para o andar acima (os passos vão se afastando) e **bate a porta do andar de cima agressivamente** — sinal sonoro de que está seguro sair!
-* **Ameaça da Porta Traseira da Antecâmara:**
-  * Fica **100% pausada** enquanto o Perseguidor está ativo no prédio.
-  * Depois que o caminho está livre, se você ficar escondido no quarto por tempo demais: 9s → `*tok... tok... tok...*` suave e abafado → 15s mais perto → 20s a maçaneta gira visivelmente → 24,5s a porta de trás abre (morte 3D arrastado para o escuro).
+* **Silhueta Macabra:** Mais alto (`1.18x`), braços finos e compridos, pescoço torto (20°) e rosto pálido maior.
+* **Evento Guiado por Áudio:** Porta bate com força 2 andares abaixo → passos humanos lentos subindo (com atenuação real por distância e filtro abafado de longe, acendendo os sensores lá embaixo!) → corra para uma Antecâmara destrancada e feche a porta (`[E]`).
+* **Defesa (Opção C):** Agache (`CTRL`) no ponto cego (enquanto agachado, `[E]` nunca abre a porta!). A luz lá fora permanece acesa enquanto ele está na janela. Ele encosta o rosto de súbito no vidro (`*TUM!*`) e pode forçar a porta → **segure `[E]`** para travar contra ele até ele desistir, subir ao andar acima e bater a porta agressivamente (sinal sonoro para sair).
+* **Porta de Trás da Antecâmara:** Pausada enquanto o Perseguidor está ativo. Se demorar depois que está seguro: 9s → `*tok... tok... tok...*` → 15s mais perto → 20s maçaneta gira → 24,5s morte 3D.
 
 ---
 
-## 3. Controles & Atalhos de Desenvolvimento
-* **`W A S D` / Setas:** Andar
-* **`SHIFT`:** Correr
-* **`CTRL` ou `C`:** Agachar (silencioso + ponto cego na Antecâmara + impede abrir porta por engano)
-* **`E` ou `Clique Esquerdo`:** Abrir/Fechar porta (em pé) | Travar porta (agachado ou quando forçada)
-* **`ESC`:** Soltar/Capturar cursor do mouse
-* **`F1` (Debug):** Alterna entre as 7 anomalias no andar atual
-* **`F2` (Debug):** Dispara o evento do Perseguidor 2 andares abaixo para teste imediato
+## 3. Áudio & Acústica DSP
+* **Barramentos no `AudioServer`:** `Stairwell` (Reverb de concreto), `Muffled` (Low-Pass 920Hz + Reverb), `Scare` (Overdrive PS1).
+* **Acústica Dinâmica:** Fechar a porta da Antecâmara abafa o drone externo e deixa seus passos secos (`Master`), voltando ao eco (`Stairwell`) ao abrir a porta.
+* **Ambiente Vivo:** Chuva noturna 3D nas janelas, goteiras nos canos, estalos térmicos, trovões distantes, motor/freio de elevador velho, batimento cardíaco dinâmico com o Perseguidor e pressão de silêncio no breu.
 
 ---
 
-## 4. Arquitetura de Arquivos do Projeto
-* [`project.godot`](project.godot) — Configurações do Godot 4.5 (Viewport 1280x720, Nearest filter, sem MSAA).
-* [`scenes/main.tscn`](scenes/main.tscn) — Cena principal que instancia `scripts/main.gd`.
-* [`shaders/ps1_post.gdshader`](shaders/ps1_post.gdshader) — Post-processing PS1 (320x240, Bayer 4x4 dithering, scanlines, vinheta e uniform `scare_intensity` para glitch/RGB split nos sustos).
-* [`scripts/audio_synth.gd`](scripts/audio_synth.gd) — Motor de áudio procedural baseado em ruído multi-banda filtrado + 3 barramentos DSP (`Stairwell` com Reverb de concreto, `Muffled` com Low-Pass + Reverb, `Scare` com Overdrive).
-* [`scripts/procedural_textures.gd`](scripts/procedural_textures.gd) — Gerador de texturas retrô (concreto, degraus, porta corta-fogo, mãos arrastadas, rosto pálido, pôsteres normal/assombrado).
-* [`scripts/player_controller.gd`](scripts/player_controller.gd) — Controle em primeira pessoa, headbob, agachar (`CTRL`), tremor de câmera e flash de jumpscare.
-* [`scripts/stairwell_segment.gd`](scripts/stairwell_segment.gd) — Módulo de cada andar físico (16 degraus por lance, sensores de movimento com delay, Antecâmara, decorações, anomalias e lógica de purificação no breu).
-* [`scripts/main.gd`](scripts/main.gd) — Constrói o prédio físico de 10 andares, gerencia baralho de anomalias, máquina de estados do Perseguidor (com atenuação dinâmica por distância) e sequências de morte 3D.
+## 4. Menus, Controles & Atalhos
+* **Menu Principal & Pausa (`ESC`):** Câmera 3D ao vivo na escadaria, `JOGAR / CONTINUAR`, `REINICIAR`, `CONTROLES`, sliders de **Sensibilidade do Mouse** e **Volume Geral**, e `SAIR`.
+* **Controles:** `WASD` (andar), `SHIFT` (correr), `CTRL` / `C` (agachar), `E` / Clique (portas / interfone / travar porta), `TAB` (Bloco de Notas), `ESC` (Pausa).
+* **Debug:** `F1` (alterna as 10 anomalias no andar atual), `F2` (dispara o Perseguidor 2 andares abaixo).
 
 ---
 
-## 5. Próximos Passos & Ideias para Continuar Depois
-* **Áudio (Polimento Final):** Considerar importar samples reais `.wav`/`.ogg` gratuitos (ex: freesound.org, CC0) para passos no concreto, porta corta-fogo metálica pesada e batidas, mantendo os barramentos DSP (`Stairwell` / `Muffled`) que já estão configurados!
-* **Mais Decorações & Vida:** Adicionar manchas de infiltração/goteira com som pingando, mais variações de pôsteres/avisos de condomínio, luz de emergência verde piscando no teto, caixa de correio/extintores variados ou lixo sutil pelos degraus.
-* **Novas Anomalias:**
-  * Lâmpada do patamar de baixo acendendo sozinha sem ninguém lá.
-  * Passos ecoando 1 degrau atrás de você quando você para de andar.
-  * Telefone de emergência / interfone na parede tocando no escuro.
-* **Menu Principal & Sombras/Polimento:** Criar uma tela inicial minimalista estilo PS1 ("BREU — Pressione qualquer tecla") e uma tela de vitória mais atmosférica ao abrir a porta do Térreo.
+## 5. Próximos Passos Possíveis
+* **Fase 2 (Opcional no futuro):** Aumentar agressividade das luzes/Perseguidor quando o jogador volta subindo do Térreo após descobrir a trava.
+* **Samples Reais CC0:** Substituir passos/porta de ferro por gravações `.wav`/`.ogg` reais mantendo os barramentos DSP.
+* **Tela Final / Cutscene de Saída:** Mostrar um vislumbre da rua chuvosa ao abrir a porta do Térreo!

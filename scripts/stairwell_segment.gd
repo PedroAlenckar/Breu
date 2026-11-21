@@ -15,7 +15,10 @@ enum AnomalyType {
 	INVISIBLE_CAST_SHADOW = 4, # Real 3D shadow cast on the concrete wall by an invisible person under the fluorescent light
 	HAUNTED_POSTER_WINDOW = 5, # Safety poster distorts + figure watching & tapping outside the mid-landing night window
 	UPPER_FLOOR_STALKER = 6,   # Sensor light on the floor ABOVE clicks on by itself and footsteps walk down from above
-	HAUNTED_DECOR_POSTERS = 7  # Lived-in props turn uncanny: Evacuation poster warps, directional arrow flips UP ("NÃO DESÇA"), wet-floor sign knocked over, fuse box sparks red!
+	HAUNTED_DECOR_POSTERS = 7, # Lived-in props turn uncanny: posters warp, arrow flips UP ("NÃO DESÇA"), wet-floor sign knocked over, fuse box sparks red!
+	RED_LIGHT_SHOCK = 8,       # Sudden blood-red light slam + terrifying shock sting when you trigger the stairwell sensor!
+	RINGING_INTERCOM = 9,      # Red emergency intercom on the wall rings piercingly; answering/approaching blasts static whisper & kills lights!
+	BROKEN_SENSOR_DARK = 10    # Mid-landing sensor sparks & fails to light up, leaving a pitch-black void with hollow breathing below!
 }
 
 var floor_index: int = 10
@@ -62,6 +65,10 @@ var sfx_whisper: AudioStreamPlayer3D
 var sfx_locked_rattle: AudioStreamPlayer3D
 var sfx_back_door_tok: AudioStreamPlayer3D
 var sfx_back_door_handle: AudioStreamPlayer3D
+var sfx_red_shock: AudioStreamPlayer
+var sfx_intercom_ring: AudioStreamPlayer3D
+var sfx_intercom_static: AudioStreamPlayer3D
+var sfx_short_circuit: AudioStreamPlayer3D
 
 # Props, Fire Door & Antecâmara
 var floor_label: Label3D
@@ -70,11 +77,19 @@ var fire_door_pivot: Node3D
 var fire_door_col_body: StaticBody3D
 var safety_poster_mesh: MeshInstance3D
 var evac_poster_mesh: MeshInstance3D
+var extra_posters: Array[Dictionary] = []
 var arrow_sign_label: Label3D
 var wet_floor_sign_root: Node3D
 var fuse_box_led_mesh: MeshInstance3D
 var notice_board_label: Label3D
 var extinguisher_root: Node3D
+var intercom_anchor: Node3D
+var lightning_light: OmniLight3D
+var lightning_silhouette: MeshInstance3D
+var red_shock_triggered: bool = false
+var intercom_ring_timer: float = 0.0
+var intercom_answered: bool = false
+var broken_sensor_sparked: bool = false
 
 var antecamara_light: OmniLight3D
 var back_corridor_door_pivot: Node3D
@@ -136,11 +151,22 @@ var anomaly_triggered_action: bool = false
 var secondary_interaction_done: bool = false
 var haunting_kill_triggered: bool = false
 
+# Enigmatic Padlock Clue Spots (4 possible hiding spots per floor)
+enum ClueSpot { WALL_BLOOD = 0, ANTECAMARA_INSIDE = 1, POSTER_NOTE = 2, WINDOW_FUSE = 3 }
+var clue_groups: Dictionary = {}
+var clue_text_quads: Dictionary = {}
+var active_clue_spot: int = -1
+var active_clue_symbol: String = ""
+var active_clue_phrase: String = ""
+var clue_discovered_already: bool = false
+
 signal haunting_ignored_kill(floor_num: int)
 signal back_door_kill(floor_num: int, door_world_pos: Vector3)
+signal request_open_keypad()
 signal ground_floor_escaped()
 signal floor_went_dark_after_visit(floor_num: int)
 signal request_upper_floor_anomaly(target_upper_floor: int)
+signal clue_discovered(symbol: String, phrase: String)
 
 func _ready() -> void:
 	_build_architecture_and_antecamara()
@@ -161,6 +187,10 @@ func setup_floor(p_floor_num: int, p_anomaly: int, p_base_unlocked: bool, p_init
 	upper_stalker_walking = false
 	upper_stalker_triggered = false
 	haunting_kill_triggered = false
+	red_shock_triggered = false
+	intercom_ring_timer = 1.2
+	intercom_answered = false
+	broken_sensor_sparked = false
 	
 	is_fire_door_open = false
 	is_door_being_forced = false
@@ -183,6 +213,7 @@ func setup_floor(p_floor_num: int, p_anomaly: int, p_base_unlocked: bool, p_init
 	
 	_update_door_lock_state()
 	update_floor_sign_number(p_floor_num)
+	clear_enigmatic_clues()
 	_apply_anomaly_state()
 	
 	if p_initial_light_on:
@@ -218,6 +249,10 @@ func set_anomaly_runtime(new_anomaly: int) -> void:
 	door_closing_anim = false
 	upper_stalker_triggered = false
 	haunting_kill_triggered = false
+	red_shock_triggered = false
+	intercom_ring_timer = 1.2
+	intercom_answered = false
+	broken_sensor_sparked = false
 	_update_door_lock_state()
 	_apply_anomaly_state()
 
@@ -266,15 +301,83 @@ func is_player_hidden_in_blind_spot(player: PlayerController) -> bool:
 		return false
 	return player.is_crouching or abs(local_p.x) > 0.62
 
+func clear_enigmatic_clues() -> void:
+	active_clue_spot = -1
+	active_clue_symbol = ""
+	active_clue_phrase = ""
+	clue_discovered_already = false
+	for k in clue_groups.keys():
+		var grp = clue_groups[k] as Node3D
+		if grp:
+			grp.visible = false
+
+func set_enigmatic_clue(spot: int, symbol: String, enigma_phrase: String) -> void:
+	active_clue_spot = spot
+	active_clue_symbol = symbol
+	active_clue_phrase = enigma_phrase
+	clue_discovered_already = false
+	if clue_text_quads.has(spot):
+		var quad = clue_text_quads[spot] as MeshInstance3D
+		var mat = StandardMaterial3D.new()
+		mat.albedo_texture = ProceduralTextures.make_blood_handwritten_texture(symbol, enigma_phrase)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+		mat.roughness = 0.22
+		quad.material_override = mat
+	if clue_groups.has(spot):
+		(clue_groups[spot] as Node3D).visible = true
+	if spot == ClueSpot.ANTECAMARA_INSIDE:
+		base_unlocked_for_run = true
+		is_fire_door_locked = false
+
+func can_interact_with_intercom(player_global_pos: Vector3) -> bool:
+	if is_ground_floor or anomaly_type != AnomalyType.RINGING_INTERCOM or intercom_answered:
+		return false
+	var local_p = to_local(player_global_pos)
+	return local_p.distance_to(Vector3(-2.16, 1.32, 2.02)) < 1.55
+
+func answer_ringing_intercom() -> void:
+	if intercom_answered:
+		return
+	intercom_answered = true
+	if sfx_intercom_ring:
+		sfx_intercom_ring.stop()
+	if sfx_intercom_static:
+		sfx_intercom_static.play()
+	# Cut lights abruptly after a brief chilling beat!
+	await get_tree().create_timer(0.65).timeout
+	if anomaly_type == AnomalyType.RINGING_INTERCOM:
+		force_lights_off_immediately()
+
+func trigger_window_lightning(show_silhouette: bool) -> void:
+	if is_ground_floor or not lightning_light:
+		return
+	lightning_light.visible = true
+	lightning_light.light_energy = 4.5
+	if lightning_silhouette:
+		lightning_silhouette.visible = show_silhouette
+	await get_tree().create_timer(0.16).timeout
+	if lightning_light:
+		lightning_light.light_energy = 0.0
+		lightning_light.visible = false
+	if lightning_silhouette:
+		lightning_silhouette.visible = false
+
+func unlock_ground_floor_exit() -> void:
+	if not is_ground_floor:
+		return
+	is_fire_door_open = true
+	fire_door_target_angle = deg_to_rad(-82.0)
+	if sfx_door_creak_shut:
+		sfx_door_creak_shut.pitch_scale = 1.05
+		sfx_door_creak_shut.play()
+	ground_floor_escaped.emit()
+
 func toggle_fire_door(player_is_crouching: bool = false) -> bool:
 	if is_ground_floor:
-		# Opening the Térreo exit door wins the game!
-		is_fire_door_open = true
-		fire_door_target_angle = deg_to_rad(-82.0)
-		if sfx_door_creak_shut:
-			sfx_door_creak_shut.pitch_scale = 1.1
-			sfx_door_creak_shut.play()
-		ground_floor_escaped.emit()
+		# Opening the Térreo exit door opens the 4-digit Padlock/Keypad UI!
+		if not is_fire_door_open:
+			request_open_keypad.emit()
 		return true
 	
 	# Never open/close the fire door while crouched (crouched + E is strictly for bracing!)
@@ -543,6 +646,21 @@ func trigger_main_sensor(duration: float = SENSOR_STAY_ON_TIME, instant: bool = 
 func trigger_mid_sensor(duration: float = SENSOR_STAY_ON_TIME) -> void:
 	if is_ground_floor:
 		return
+	# Anomaly #10: Broken Sensor / Short-Circuit! Sparks once and stays pitch black with breathing below!
+	if anomaly_type == AnomalyType.BROKEN_SENSOR_DARK:
+		if not broken_sensor_sparked:
+			broken_sensor_sparked = true
+			if sfx_short_circuit:
+				sfx_short_circuit.play()
+			if sfx_whisper:
+				sfx_whisper.play()
+			# Tiny 0.08s spark flash then dead pitch black
+			_set_mid_light_power(0.65)
+			await get_tree().create_timer(0.08).timeout
+			_set_mid_light_power(0.0)
+			mid_light_on = false
+		return
+	
 	var was_off = not mid_light_on
 	mid_light_on = true
 	mid_light_timer = max(mid_light_timer, duration)
@@ -558,17 +676,27 @@ func _set_main_light_power(factor: float) -> void:
 	if not main_light:
 		return
 	main_light.visible = (factor > 0.01)
-	main_light.light_energy = 1.55 * factor
+	if anomaly_type == AnomalyType.RED_LIGHT_SHOCK and red_shock_triggered:
+		main_light.light_color = Color(1.0, 0.06, 0.04)
+		main_light.light_energy = 2.05 * factor
+	else:
+		main_light.light_color = Color(0.85, 0.93, 0.88) if not is_ground_floor else Color(0.75, 1.0, 0.82)
+		main_light.light_energy = 1.55 * factor
 	var mat = main_bulb_mesh.material_override as StandardMaterial3D
 	if mat:
+		mat.emission = main_light.light_color
 		mat.emission_energy_multiplier = 2.5 * factor
 
 func _set_mid_light_power(factor: float) -> void:
 	if not mid_light:
 		return
 	mid_light.visible = (factor > 0.01)
-	mid_light.light_color = Color(0.84, 0.92, 0.88)
-	mid_light.light_energy = 1.45 * factor
+	if anomaly_type == AnomalyType.RED_LIGHT_SHOCK and red_shock_triggered:
+		mid_light.light_color = Color(1.0, 0.06, 0.04)
+		mid_light.light_energy = 2.15 * factor
+	else:
+		mid_light.light_color = Color(0.84, 0.92, 0.88)
+		mid_light.light_energy = 1.45 * factor
 	var mat = mid_bulb_mesh.material_override as StandardMaterial3D
 	if mat:
 		mat.emission = mid_light.light_color
@@ -608,8 +736,9 @@ func _build_architecture_and_antecamara() -> void:
 			_add_static_box(Vector3(0.2, top_h, 11.6), Vector3(2.3, top_h * 0.5, -3.2), concrete_mat)
 			_add_static_box(Vector3(4.8, top_h, 0.2), Vector3(0.0, top_h * 0.5, -8.9), concrete_mat)
 			_add_static_box(Vector3(0.28, top_h, 6.2), Vector3(0.0, top_h * 0.5, -3.1), concrete_mat)
-			# Solid concrete wall behind the iron security gate on the right side (no void!)
-			_add_static_box(Vector3(2.1, top_h, 0.25), Vector3(1.12, top_h * 0.5, -0.85), concrete_mat)
+			# Solid concrete wall & floor threshold directly behind the iron security gate on the right side (ZERO floor gap!)
+			_add_static_box(Vector3(2.1, top_h, 0.25), Vector3(1.12, top_h * 0.5, -0.22), concrete_mat)
+			_add_static_box(Vector3(2.1, 0.25, 0.45), Vector3(1.12, -0.125, -0.15), concrete_mat)
 			# Textured concrete ceiling slab above the 10th floor landing & flight
 			_add_static_box(Vector3(4.8, 0.25, 11.8), Vector3(0.0, top_h, -3.2), concrete_mat)
 			# Upper front wall above doorway lintel (Y from 2.5 to 3.2)
@@ -761,6 +890,7 @@ func _build_lights_and_sensors() -> void:
 	# Back Door Muffled Sounds (behind the inner Antecâmara door!)
 	sfx_back_door_tok = AudioSynth.create_player_3d(back_corridor_door_pivot, AudioSynth.make_back_door_tok(), 5.0, 12.0, "Muffled", 0.0)
 	sfx_back_door_handle = AudioSynth.create_player_3d(back_corridor_door_pivot, AudioSynth.make_handle_turn(), 5.0, 12.0, "Muffled", 1.5)
+	sfx_red_shock = AudioSynth.create_player(self, AudioSynth.make_red_light_shock_sting(), "Scare", 1.5)
 	
 	if is_ground_floor:
 		return
@@ -787,6 +917,36 @@ func _build_lights_and_sensors() -> void:
 	sfx_heavy_stairs = AudioSynth.create_player_3d(mid_fixture, AudioSynth.make_heavy_stair_steps(), 10.0, 26.0, "Stairwell", 1.0)
 	sfx_glass_tap_window = AudioSynth.create_player_3d(mid_fixture, AudioSynth.make_glass_tap(), 8.0, 16.0, "Stairwell", 0.5)
 	sfx_whisper = AudioSynth.create_player_3d(mid_fixture, AudioSynth.make_whisper_breath(), 7.0, 16.0, "Stairwell", -1.0)
+	
+	# Soft muffled night rain & wind right at the mid-landing barred window (audible as you descend toward it!)
+	var win_rain_anchor = Node3D.new()
+	win_rain_anchor.position = Vector3(-0.95, -0.85, -8.75)
+	add_child(win_rain_anchor)
+	var sfx_win_rain = AudioSynth.create_player_3d(win_rain_anchor, AudioSynth.make_night_rain_window(), 3.8, 11.5, "Muffled", 0.5)
+	sfx_win_rain.play()
+	sfx_short_circuit = AudioSynth.create_player_3d(mid_fixture, AudioSynth.make_short_circuit_spark(), 7.0, 18.0, "Stairwell", 1.5)
+	
+	# Lightning flash light & spooky silhouette outside the barred night window!
+	lightning_light = OmniLight3D.new()
+	lightning_light.position = Vector3(-0.95, -0.75, -8.45)
+	lightning_light.light_color = Color(0.68, 0.80, 1.0)
+	lightning_light.omni_range = 8.5
+	lightning_light.light_energy = 0.0
+	lightning_light.visible = false
+	add_child(lightning_light)
+	
+	lightning_silhouette = MeshInstance3D.new()
+	var lsq = QuadMesh.new()
+	lsq.size = Vector2(0.55, 0.72)
+	lightning_silhouette.mesh = lsq
+	lightning_silhouette.position = Vector3(-0.95, -0.92, -8.70)
+	var ls_mat = StandardMaterial3D.new()
+	ls_mat.albedo_texture = ProceduralTextures.get_peeking_face_texture()
+	ls_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	ls_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	lightning_silhouette.material_override = ls_mat
+	lightning_silhouette.visible = false
+	add_child(lightning_silhouette)
 
 func _create_bulb_fixture(parent: Node3D) -> MeshInstance3D:
 	var housing = MeshInstance3D.new()
@@ -1076,7 +1236,45 @@ func _build_props_and_decorations() -> void:
 	bin_mesh.material_override = slat_mat
 	add_child(bin_mesh)
 	
+	# 5b2. Red Wall Emergency Intercom Box (Interfone de Emergência) on Main Landing Left Wall
+	intercom_anchor = Node3D.new()
+	intercom_anchor.position = Vector3(-2.16, 1.32, 2.02)
+	add_child(intercom_anchor)
+	
+	var intercom = MeshInstance3D.new()
+	var ic_box = BoxMesh.new()
+	ic_box.size = Vector3(0.08, 0.26, 0.18)
+	intercom.mesh = ic_box
+	intercom.material_override = red_metal_mat
+	intercom_anchor.add_child(intercom)
+	
+	sfx_intercom_ring = AudioSynth.create_player_3d(intercom_anchor, AudioSynth.make_intercom_ring(), 7.5, 22.0, "Stairwell", 0.5)
+	sfx_intercom_static = AudioSynth.create_player_3d(intercom_anchor, AudioSynth.make_intercom_static_voice(), 6.0, 14.0, "Stairwell", 2.0)
+	
+	# 5b3. Per-Floor Unique Lived-In Narrative Props (makes each floor visually distinct!)
+	_build_per_floor_narrative_props(slat_mat, wood_mat)
+	
+	# 5b4. Enigmatic Clue Labels (Hidden until main.gd places the 4 run clues!)
+	_build_clue_label_anchors()
+	
 	if is_ground_floor:
+		# Build the 4-Digit Keypad Box & Symbol Order Plaque right next to the Térreo exit door!
+		var kp_box = MeshInstance3D.new()
+		var kpm = BoxMesh.new()
+		kpm.size = Vector3(0.18, 0.26, 0.06)
+		kp_box.mesh = kpm
+		kp_box.position = Vector3(0.75, 1.32, 2.38)
+		kp_box.material_override = slat_mat
+		add_child(kp_box)
+		
+		var order_note = Label3D.new()
+		order_note.position = Vector3(1.32, 1.35, 2.35)
+		order_note.rotation.y = PI
+		order_note.pixel_size = 0.0025
+		order_note.font_size = 24
+		order_note.modulate = Color(0.92, 0.86, 0.72)
+		order_note.text = "SENHA DO TÉRREO\n\n1º: ◈    2º: ✕\n3º: ☾    4º: ▲\n\n(Procure os símbolos\npelos andares acima)"
+		add_child(order_note)
 		return
 	
 	# 5c. Directional "↓ SAÍDA" Sign on the Center Concrete Divider Pillar facing Flight 1 (flips UP in Anomaly #7!)
@@ -1505,6 +1703,14 @@ func _apply_anomaly_state() -> void:
 		if epmat:
 			epmat.albedo_texture = ProceduralTextures.get_evac_poster_haunted() if (anomaly_type == AnomalyType.HAUNTED_DECOR_POSTERS) else ProceduralTextures.get_evac_poster_normal()
 	
+	for ep_data in extra_posters:
+		var m = ep_data["mesh"] as MeshInstance3D
+		if m:
+			var mat = m.material_override as StandardMaterial3D
+			if mat:
+				var is_h = (anomaly_type == AnomalyType.HAUNTED_DECOR_POSTERS or anomaly_type == AnomalyType.HAUNTED_POSTER_WINDOW)
+				mat.albedo_texture = ep_data["haunted"] if is_h else ep_data["normal"]
+	
 	if arrow_sign_label:
 		if anomaly_type == AnomalyType.HAUNTED_DECOR_POSTERS:
 			arrow_sign_label.text = "↑ NÃO DESÇA"
@@ -1540,18 +1746,276 @@ func _apply_anomaly_state() -> void:
 		elif anomaly_type == AnomalyType.HAUNTED_DECOR_POSTERS:
 			notice_board_label.text = "AVISO AOS MORADORES\n\nOS PÔSTERES ESTÃO\nOLHANDO PARA VOCÊ.\nNÃO DESÇA."
 		else:
-			notice_board_label.text = "AVISO AOS MORADORES\n\nViu algo no andar?\nVolte ao andar de cima\ne espere a luz apagar."
+			notice_board_label.text = _get_story_notice_for_floor(floor_index)
+
+func _get_story_notice_for_floor(f: int) -> String:
+	match f:
+		10:
+			return "COMUNICADO - 10º ANDAR\n\nElevador em manutenção.\nEm caso de apagão, use a\nescada. Térreo com senha."
+		9:
+			return "AVISO AOS MORADORES\n\nViu algo estranho no andar?\nVolte ao andar de cima\ne espere a luz apagar."
+		8:
+			return "BILHETE - APTO 802\n\nAlguém subiu a escada às 3h.\nO sensor acendia sozinho,\nmas não tinha ninguém lá."
+		7:
+			return "MANUTENÇÃO ELÉTRICA\n\nSensores ajustados para\napagar após 4 segundos.\nNão force as portas."
+		6:
+			return "RECADO RABISCADO\n\nSe a porta de trás da\nantecâmara começar a bater,\nsaia. Não são moradores."
+		5:
+			return "AVISO DE SEGURANÇA\n\nAlgumas antecâmaras foram\ntrancadas pelo zelador.\nMemorize as abertas."
+		4:
+			return "ZELADORIA — URGENTE\n\nTranquei o Térreo e mudei\na senha. Espalhei os 4\nsímbolos pelos andares."
+		3:
+			return "ANOTAÇÃO NA PAREDE\n\nSe ouvir uma porta bater\nforte lá embaixo, corra\ne agache longe do vidro."
+		2:
+			return "BILHETE RASGADO\n\nEu esqueci o último\nnúmero da senha...\nVou ter que subir de novo."
+		1:
+			return "1º ANDAR — QUASE LÁ\n\nAbaixo fica o Térreo.\nSem os 4 símbolos, a\nporta não vai abrir."
+		0:
+			return "PORTARIA — TÉRREO\n\nTrava noturna ativa.\nDigite os 4 dígitos na\nordem dos símbolos."
+	return "AVISO AOS MORADORES\n\nMantenha a porta\ncorta-fogo fechada."
+
+func _build_per_floor_narrative_props(metal_mat: Material, wood_mat: Material) -> void:
+	# Cardboard Moving Boxes on floors 9, 5, 2
+	if floor_index in [9, 5, 2]:
+		var box_mat = StandardMaterial3D.new()
+		box_mat.albedo_color = Color(0.42, 0.31, 0.19)
+		box_mat.roughness = 0.95
+		_add_static_box(Vector3(0.46, 0.38, 0.42), Vector3(1.82, 0.19, 1.35), box_mat)
+		_add_static_box(Vector3(0.36, 0.30, 0.34), Vector3(1.80, 0.53, 1.38), box_mat)
+	
+	# Janitor's Mop & Cleaning Bucket on floors 8, 4
+	if floor_index in [8, 4]:
+		var bucket_mat = StandardMaterial3D.new()
+		bucket_mat.albedo_color = Color(0.14, 0.28, 0.45)
+		var bucket = MeshInstance3D.new()
+		var bcyl = CylinderMesh.new()
+		bcyl.top_radius = 0.17
+		bcyl.bottom_radius = 0.13
+		bcyl.height = 0.34
+		bcyl.radial_segments = 10
+		bucket.mesh = bcyl
+		bucket.position = Vector3(-1.82, 0.17, 0.55)
+		bucket.material_override = bucket_mat
+		add_child(bucket)
+		
+		var mop_stick = MeshInstance3D.new()
+		var mcyl = CylinderMesh.new()
+		mcyl.top_radius = 0.015
+		mcyl.bottom_radius = 0.015
+		mcyl.height = 1.35
+		mop_stick.mesh = mcyl
+		mop_stick.position = Vector3(-1.86, 0.72, 0.52)
+		mop_stick.rotation.z = deg_to_rad(14.0)
+		mop_stick.material_override = wood_mat
+		add_child(mop_stick)
+	
+	# Old Folding Chair leaning against wall on floors 7, 3
+	if floor_index in [7, 3]:
+		var chair = Node3D.new()
+		chair.position = Vector3(1.92, 0.0, 0.62)
+		chair.rotation.y = deg_to_rad(-75.0)
+		add_child(chair)
+		var seat = MeshInstance3D.new()
+		var sm = BoxMesh.new()
+		sm.size = Vector3(0.42, 0.04, 0.40)
+		seat.mesh = sm
+		seat.position = Vector3(0.0, 0.45, 0.0)
+		seat.material_override = wood_mat
+		chair.add_child(seat)
+		var back = MeshInstance3D.new()
+		var bm = BoxMesh.new()
+		bm.size = Vector3(0.42, 0.46, 0.04)
+		back.mesh = bm
+		back.position = Vector3(0.0, 0.68, -0.18)
+		back.material_override = wood_mat
+		chair.add_child(back)
+		for lx in [-0.18, 0.18]:
+			for lz in [-0.17, 0.17]:
+				var leg = MeshInstance3D.new()
+				var lm = BoxMesh.new()
+				lm.size = Vector3(0.03, 0.45, 0.03)
+				leg.mesh = lm
+				leg.position = Vector3(lx, 0.225, lz)
+				leg.material_override = metal_mat
+				chair.add_child(leg)
+	
+	# Dark Damp Water Puddle under corner pipe drips on lower floors 6, 4, 2, 1
+	if floor_index in [6, 4, 2, 1]:
+		var puddle = MeshInstance3D.new()
+		var pq = QuadMesh.new()
+		pq.size = Vector2(0.85, 0.72)
+		puddle.mesh = pq
+		puddle.position = Vector3(-1.72, 0.008, 1.95)
+		puddle.rotation.x = -PI * 0.5
+		var pud_mat = StandardMaterial3D.new()
+		pud_mat.albedo_color = Color(0.03, 0.04, 0.05, 0.75)
+		pud_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		pud_mat.roughness = 0.08
+		pud_mat.metallic = 0.5
+		puddle.material_override = pud_mat
+		add_child(puddle)
+	
+	# Varied Extra Retro Posters per floor (some floors have 3-4 posters clustered along walls, others fewer!)
+	if not is_ground_floor:
+		# Left wall going down Flight 1 (floors 9, 7, 5, 3, 1 get a Missing Person flyer along the stairs)
+		if floor_index in [9, 7, 5, 3, 1]:
+			_add_extra_poster(
+				Vector3(-2.19, 0.35, -2.55), Vector3(0.0, PI * 0.5, deg_to_rad(-2.5)),
+				Vector2(0.46, 0.64),
+				ProceduralTextures.get_missing_poster_normal(),
+				ProceduralTextures.get_missing_poster_haunted()
+			)
+		# Main landing left wall beside the first poster (floors 9, 7, 6, 3, 2 get an extra clustered poster!)
+		if floor_index in [9, 7, 6, 3, 2]:
+			_add_extra_poster(
+				Vector3(-2.19, 1.48, 0.45), Vector3(0.0, PI * 0.5, deg_to_rad(3.0)),
+				Vector2(0.44, 0.44),
+				ProceduralTextures.get_warning_poster_normal(),
+				ProceduralTextures.get_warning_poster_haunted()
+			)
+		# Flight 1 lower left wall (floors 7, 5, 3, 1 get a second portrait poster down the stairs!)
+		if floor_index in [7, 5, 3, 1]:
+			_add_extra_poster(
+				Vector3(-2.19, -0.55, -4.85), Vector3(0.0, PI * 0.5, deg_to_rad(2.0)),
+				Vector2(0.48, 0.70),
+				ProceduralTextures.get_poster_normal_texture(),
+				ProceduralTextures.get_poster_haunted_texture()
+			)
+		# Mid-landing right wall beside the fire hose box (floors 8, 7, 3, 2 get a Missing Person flyer)
+		if floor_index in [8, 7, 3, 2]:
+			_add_extra_poster(
+				Vector3(2.19, -1.05, -8.25), Vector3(0.0, -PI * 0.5, deg_to_rad(-3.0)),
+				Vector2(0.46, 0.64),
+				ProceduralTextures.get_missing_poster_normal(),
+				ProceduralTextures.get_missing_poster_haunted()
+			)
+
+func _add_extra_poster(pos: Vector3, rot: Vector3, sz: Vector2, norm_tex: Texture2D, haunt_tex: Texture2D) -> void:
+	var mi = MeshInstance3D.new()
+	var qm = QuadMesh.new()
+	qm.size = sz
+	mi.mesh = qm
+	mi.position = pos
+	mi.rotation = rot
+	var mat = StandardMaterial3D.new()
+	mat.albedo_texture = norm_tex
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.roughness = 0.9
+	mi.material_override = mat
+	add_child(mi)
+	extra_posters.append({ "mesh": mi, "normal": norm_tex, "haunted": haunt_tex })
+
+func _build_clue_label_anchors() -> void:
+	if is_ground_floor:
+		return
+	
+	var blood_mat = StandardMaterial3D.new()
+	blood_mat.albedo_texture = ProceduralTextures.get_blood_wall_splatter_texture()
+	blood_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	blood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	blood_mat.roughness = 0.25
+	
+	var hand_blood_mat = StandardMaterial3D.new()
+	hand_blood_mat.albedo_texture = ProceduralTextures.get_handprint_texture()
+	hand_blood_mat.albedo_color = Color(0.62, 0.04, 0.03, 0.92)
+	hand_blood_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	hand_blood_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	hand_blood_mat.roughness = 0.25
+	
+	# 0. WALL_BLOOD: Huge exaggerated dripping blood mural on the mid-landing concrete wall!
+	var g_blood = _create_blood_clue_group(
+		Vector3(2.17, -1.12, -6.35),
+		Vector3(0.0, -PI * 0.5, deg_to_rad(-4.5)),
+		Vector2(2.15, 1.55), blood_mat, hand_blood_mat, true
+	)
+	clue_groups[ClueSpot.WALL_BLOOD] = g_blood["root"]
+	clue_text_quads[ClueSpot.WALL_BLOOD] = g_blood["text_quad"]
+	
+	# 1. ANTECAMARA_INSIDE: Dramatic bloody scrawl across the inner concrete wall of the Antecâmara!
+	var g_ante = _create_blood_clue_group(
+		Vector3(-1.33, 1.32, 4.05),
+		Vector3(0.0, PI * 0.5, deg_to_rad(3.5)),
+		Vector2(1.90, 1.38), blood_mat, hand_blood_mat, true
+	)
+	clue_groups[ClueSpot.ANTECAMARA_INSIDE] = g_ante["root"]
+	clue_text_quads[ClueSpot.ANTECAMARA_INSIDE] = g_ante["text_quad"]
+	
+	# 2. POSTER_NOTE: Bloody scrawl slashed across the wall right below/beside the Safety Poster!
+	var g_poster = _create_blood_clue_group(
+		Vector3(-2.17, 0.86, 1.15),
+		Vector3(0.0, PI * 0.5, deg_to_rad(-3.0)),
+		Vector2(1.55, 1.10), blood_mat, hand_blood_mat, false
+	)
+	clue_groups[ClueSpot.POSTER_NOTE] = g_poster["root"]
+	clue_text_quads[ClueSpot.POSTER_NOTE] = g_poster["text_quad"]
+	
+	# 3. WINDOW_FUSE: Dripping blood smear between the Night Window & Fuse Box on the mid-landing!
+	var g_win = _create_blood_clue_group(
+		Vector3(0.28, -1.08, -8.76),
+		Vector3(0.0, 0.0, deg_to_rad(4.0)),
+		Vector2(1.65, 1.22), blood_mat, hand_blood_mat, true
+	)
+	clue_groups[ClueSpot.WINDOW_FUSE] = g_win["root"]
+	clue_text_quads[ClueSpot.WINDOW_FUSE] = g_win["text_quad"]
+
+func _create_blood_clue_group(pos: Vector3, rot: Vector3, smear_size: Vector2, blood_mat: Material, hand_mat: Material, add_handprints: bool) -> Dictionary:
+	var root = Node3D.new()
+	root.position = pos
+	root.rotation = rot
+	root.visible = false
+	add_child(root)
+	
+	# Huge dripping blood smear backdrop on the wall
+	var smear = MeshInstance3D.new()
+	var sq = QuadMesh.new()
+	sq.size = smear_size
+	smear.mesh = sq
+	smear.position = Vector3(0.0, -0.08, 0.0)
+	smear.material_override = blood_mat
+	root.add_child(smear)
+	
+	# Bloody handprints stamped frantically beside the scrawled clue
+	if add_handprints:
+		for hx in [-smear_size.x * 0.38, smear_size.x * 0.38]:
+			var hp = MeshInstance3D.new()
+			var hq = QuadMesh.new()
+			hq.size = Vector2(0.32, 0.42)
+			hp.mesh = hq
+			hp.position = Vector3(hx, -0.22 if hx < 0.0 else 0.16, 0.005)
+			hp.rotation.z = deg_to_rad(18.0 if hx < 0.0 else -22.0)
+			hp.material_override = hand_mat
+			root.add_child(hp)
+	
+	# Hand-painted trembling blood calligraphy Quad (ZERO clean computer fonts!)
+	var text_quad = MeshInstance3D.new()
+	var tq = QuadMesh.new()
+	tq.size = Vector2(smear_size.x * 0.96, smear_size.y * 0.88)
+	text_quad.mesh = tq
+	text_quad.position = Vector3(0.0, 0.04, 0.012)
+	root.add_child(text_quad)
+	
+	return { "root": root, "text_quad": text_quad }
 
 func _update_anomalies_runtime(delta: float) -> void:
-	if is_ground_floor or anomaly_type == AnomalyType.NONE:
+	if is_ground_floor:
 		return
 	var player = get_tree().get_first_node_in_group("player") as Node3D
 	if not player:
 		return
 	
 	var local_p = to_local(player.global_position)
-	# Only animate/trigger anomalies when player is physically on this floor!
+	# Only animate/trigger anomalies or clue discovery when player is physically on this floor!
 	if local_p.y > 2.0 or local_p.y < -4.5:
+		return
+	
+	# Auto-discover blood clue for the [TAB] Notebook when player walks close to it!
+	if active_clue_spot != -1 and not clue_discovered_already and clue_groups.has(active_clue_spot):
+		var grp = clue_groups[active_clue_spot] as Node3D
+		if grp.visible and local_p.distance_to(grp.position) < 2.35:
+			clue_discovered_already = true
+			clue_discovered.emit(active_clue_symbol, active_clue_phrase)
+	
+	if anomaly_type == AnomalyType.NONE:
 		return
 	
 	var t_sec = Time.get_ticks_msec() * 0.001
@@ -1643,6 +2107,32 @@ func _update_anomalies_runtime(delta: float) -> void:
 		if not upper_stalker_triggered and local_p.z < -1.35 and local_p.y < -0.35:
 			upper_stalker_triggered = true
 			request_upper_floor_anomaly.emit(floor_index + 1)
+	
+	# 7. SUDDEN BLOOD-RED LIGHT SHOCK (Luzes acendem vermelho de uma vez com som assustador!)
+	if anomaly_type == AnomalyType.RED_LIGHT_SHOCK:
+		if not red_shock_triggered and local_p.z < -2.1 and local_p.y < -0.55:
+			red_shock_triggered = true
+			# Slam BOTH main and mid lights blood-red simultaneously with a sudden horror sting!
+			main_light_on = true
+			mid_light_on = true
+			main_light_timer = 6.5
+			mid_light_timer = 6.5
+			main_flicker_time = 0.0
+			mid_flicker_time = 0.0
+			_set_main_light_power(1.0)
+			_set_mid_light_power(1.0)
+			if sfx_red_shock:
+				sfx_red_shock.play()
+			if player is PlayerController:
+				(player as PlayerController).camera_shake = 0.048
+	
+	# 8. RINGING RED INTERCOM (Interfone toca sozinho no escuro!)
+	if anomaly_type == AnomalyType.RINGING_INTERCOM and not intercom_answered:
+		intercom_ring_timer -= delta
+		if intercom_ring_timer <= 0.0:
+			intercom_ring_timer = 2.6
+			if sfx_intercom_ring and not sfx_intercom_ring.playing:
+				sfx_intercom_ring.play()
 	
 	# 7. HAUNTING DEATH TRIGGER ("O Puxão no Breu"):
 	# If the player ignores the active haunting on this floor and keeps descending Flight 2
